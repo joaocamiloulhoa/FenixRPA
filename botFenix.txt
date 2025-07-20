@@ -1,0 +1,980 @@
+import sys
+import time
+ 
+# Try to import requests (optional)
+try:
+    import requests
+    HAS_REQUESTS = True
+except ImportError:
+    print("Aviso: Biblioteca requests não encontrada. Pulando teste de conectividade.")
+    print("Para instalar: pip install requests")
+    HAS_REQUESTS = False
+ 
+# Try to import Selenium with helpful error messages
+try:
+    from selenium import webdriver
+    from selenium.webdriver.chrome.options import Options
+    from selenium.webdriver.chrome.service import Service
+except ImportError as e:
+    print("Erro: Biblioteca selenium não encontrada.")
+    print("Execute o comando abaixo no terminal:")
+    print("pip install selenium")
+    sys.exit(1)
+ 
+# Try to import WebDriver Manager
+try:
+    from webdriver_manager.chrome import ChromeDriverManager
+except ImportError as e:
+    print("Erro: WebDriver Manager não encontrado.")
+    print("Execute o comando abaixo no terminal:")
+    print("pip install webdriver-manager")
+    print("Isso eliminará a necessidade de baixar o ChromeDriver manualmente!")
+    sys.exit(1)
+ 
+# Try to import additional Selenium components
+try:
+    from selenium.webdriver.common.by import By
+    from selenium.webdriver.support.ui import WebDriverWait
+    from selenium.webdriver.support import expected_conditions as EC
+    from selenium.common.exceptions import TimeoutException, NoSuchElementException
+except ImportError as e:
+    print("Erro: Componentes adicionais do Selenium não encontrados.")
+    print("Execute: pip install selenium")
+    sys.exit(1)
+ 
+# Try to import additional libraries
+try:
+    import pandas as pd
+    import tkinter as tk
+    from tkinter import filedialog
+    HAS_PANDAS = True
+except ImportError as e:
+    print("Aviso: Pandas ou tkinter não encontrados.")
+    print("Execute: pip install pandas")
+    HAS_PANDAS = False
+ 
+# Try to import pyautogui
+try:
+    import pyautogui
+    HAS_PYAUTOGUI = True
+except ImportError as e:
+    print("Aviso: PyAutoGUI não encontrado.")
+    print("Execute: pip install pyautogui")
+    HAS_PYAUTOGUI = False
+ 
+# =========================================================================
+# CONFIGURAÇÕES
+# =========================================================================
+ 
+FENIX_URL = "https://fenixflorestal.suzanonet.com.br/"
+ 
+# =========================================================================
+# FUNÇÃO PARA TESTAR A CONECTIVIDADE
+# =========================================================================
+ 
+def test_connectivity():
+    """Testa se há conectividade com a internet e o site"""
+    if not HAS_REQUESTS:
+        print("Pulando teste de conectividade (requests não instalado)")
+        return True
+   
+    print("Testando conectividade...")
+   
+    # Testar conectividade geral
+    try:
+        response = requests.get("https://www.google.com", timeout=5, verify=False)
+        print("✓ Conectividade com a internet: OK")
+    except Exception as e:
+        print(f"⚠ Aviso: Problema na conectividade geral: {e}")
+        print("Tentando prosseguir mesmo assim...")
+        return True  # Continuar mesmo com problema
+   
+    # Testar conectividade com o site específico  
+    try:
+        response = requests.get(FENIX_URL, timeout=10, verify=False)
+        print(f"✓ Conectividade com {FENIX_URL}: OK")
+        return True
+    except Exception as e:
+        print(f"⚠ Aviso: Problema ao acessar {FENIX_URL}: {e}")
+        print("Tentando abrir no navegador mesmo assim...")
+        return True  # Continuar mesmo com problema
+ 
+# =========================================================================
+# NAVEGAÇÃO E PROCESSAMENTO
+# =========================================================================
+ 
+def navigate_to_upload_section(driver, wait):
+    """Navega para a seção de upload de laudos"""
+    try:
+        print("\n" + "="*50)
+        print("NAVEGANDO PARA SEÇÃO DE UPLOAD")
+        print("="*50)
+       
+        # Aguardar e clicar em "Submissão de Laudos"
+        print("Procurando botão 'Submissão de Laudos'...")
+        submissao_button = wait.until(
+            EC.element_to_be_clickable((By.XPATH, '//*[@id="__next"]/div[1]/div/nav/div/div/div[2]/div/div[3]/button'))
+        )
+        print("✓ Botão 'Submissão de Laudos' encontrado! Clicando...")
+        submissao_button.click()
+       
+        # Aguardar carregamento da nova tela
+        time.sleep(3)
+       
+        # Clicar em "Upload de Laudos"
+        print("Procurando botão 'Upload de Laudos'...")
+        upload_button = wait.until(
+            EC.element_to_be_clickable((By.XPATH, '//*[@id="__next"]/div[2]/div/div[2]'))
+        )
+        print("✓ Botão 'Upload de Laudos' encontrado! Clicando...")
+        upload_button.click()
+       
+        print("✓ Navegação concluída com sucesso!")
+        return True
+       
+    except TimeoutException:
+        print("⚠ Timeout: Botões não encontrados no tempo esperado.")
+        return False
+    except Exception as e:
+        print(f"⚠ Erro na navegação: {e}")
+        return False
+ 
+def select_excel_file():
+    """Abre dialog para selecionar arquivo Excel"""
+    if not HAS_PANDAS:
+        print("Erro: Pandas não está instalado. Execute: pip install pandas")
+        return None, None
+   
+    try:
+        print("\n" + "="*50)
+        print("SELEÇÃO DE ARQUIVO EXCEL")
+        print("="*50)
+       
+        # Configurar Tkinter (ocultar janela principal)
+        root = tk.Tk()
+        root.withdraw()
+       
+        # Abrir dialog de seleção de arquivo
+        file_path = filedialog.askopenfilename(
+            title="Selecione o arquivo Excel",
+            filetypes=(("Arquivos Excel", "*.xlsx *.xls"), ("Todos os arquivos", "*.*"))
+        )
+       
+        root.destroy()
+       
+        if not file_path:
+            print("Nenhum arquivo selecionado.")
+            return None, None
+       
+        print(f"✓ Arquivo selecionado: {file_path}")
+       
+        # Ler o arquivo Excel
+        print("Carregando planilha...")
+        df = pd.read_excel(file_path)
+        print(f"✓ Planilha carregada com {len(df)} linhas")
+       
+        return file_path, df
+       
+    except Exception as e:
+        print(f"Erro ao selecionar/carregar arquivo: {e}")
+        return None, None
+ 
+def filter_by_nucleo_and_ocorrencia(df):
+    """Filtra dados por núcleo e ocorrência predominante"""
+    try:
+        print("\n" + "="*50)
+        print("FILTRO POR NÚCLEO")
+        print("="*50)
+       
+        # Verificar se coluna 'Nucleo' existe
+        if 'Nucleo' not in df.columns:
+            print("⚠ Erro: Coluna 'Nucleo' não encontrada na planilha.")
+            print("Colunas disponíveis:", list(df.columns))
+            return None, 0, None, None
+       
+        # Mostrar núcleos únicos disponíveis
+        nucleos_unicos = df['Nucleo'].unique()
+        print("Núcleos disponíveis na planilha:")
+        for i, nucleo in enumerate(nucleos_unicos, 1):
+            count = len(df[df['Nucleo'] == nucleo])
+            print(f"  {i}. {nucleo} ({count} registros)")
+       
+        # Solicitar núcleo
+        nucleo_input = input("\nDigite o nome do núcleo para filtrar: ").strip()
+       
+        if not nucleo_input:
+            print("Núcleo não informado.")
+            return None, 0, None, None
+       
+        # Filtrar dados por núcleo
+        df_nucleo = df[df['Nucleo'].str.contains(nucleo_input, case=False, na=False)]
+       
+        if len(df_nucleo) == 0:
+            print(f"⚠ Nenhum registro encontrado para o núcleo '{nucleo_input}'")
+            return None, 0, None, None
+       
+        print(f"✓ Núcleo filtrado: {len(df_nucleo)} registros encontrados para '{nucleo_input}'")
+       
+        # Verificar se coluna 'Ocorrência Predominante' existe
+        if 'Ocorrência Predominante' not in df_nucleo.columns:
+            print("⚠ Erro: Coluna 'Ocorrência Predominante' não encontrada na planilha.")
+            print("Colunas disponíveis:", list(df_nucleo.columns))
+            return None, 0, nucleo_input, None
+       
+        print("\n" + "="*50)
+        print("FILTRO POR OCORRÊNCIA PREDOMINANTE")
+        print("="*50)
+       
+        # Mostrar ocorrências únicas disponíveis
+        ocorrencias_unicas = df_nucleo['Ocorrência Predominante'].unique()
+        print("Ocorrências predominantes disponíveis:")
+        for i, ocorrencia in enumerate(ocorrencias_unicas, 1):
+            count = len(df_nucleo[df_nucleo['Ocorrência Predominante'] == ocorrencia])
+            print(f"  {i}. {ocorrencia} ({count} registros)")
+       
+        # Solicitar ocorrência
+        ocorrencia_input = input("\nDigite o nome da ocorrência predominante para filtrar: ").strip()
+       
+        if not ocorrencia_input:
+            print("Ocorrência não informada.")
+            return None, 0, nucleo_input, None
+       
+        # Filtrar dados por ocorrência
+        df_filtrado = df_nucleo[df_nucleo['Ocorrência Predominante'].str.contains(ocorrencia_input, case=False, na=False)]
+       
+        if len(df_filtrado) == 0:
+            print(f"⚠ Nenhum registro encontrado para a ocorrência '{ocorrencia_input}'")
+            return None, 0, nucleo_input, None
+       
+        print(f"✓ Filtros aplicados: {len(df_filtrado)} registros encontrados")
+       
+        # Mostrar resumo dos dados filtrados
+        print("\nResumo dos dados que serão lançados:")
+        print(f"  - Total de registros: {len(df_filtrado)}")
+        print(f"  - Núcleo: {nucleo_input}")
+        print(f"  - Ocorrência Predominante: {ocorrencia_input}")
+       
+        if 'UP' in df_filtrado.columns:
+            print(f"  - UPs encontradas: {df_filtrado['UP'].nunique()}")
+       
+        return df_filtrado, len(df_filtrado), nucleo_input, ocorrencia_input
+       
+    except Exception as e:
+        print(f"Erro ao filtrar dados: {e}")
+        return None, 0, None, None
+ 
+def get_diagnostico_text(ocorrencia):
+    """Retorna o texto de diagnóstico fixo para todas as ocorrências"""
+    return (
+        "Foi objeto deste Laudo as áreas afetadas por incêndios florestais e vendaval (Déficit Hídrico), conforme as características de danos a seguir:\n\n"
+        "Seca e mortalidade dos plantios devido ao fogo ou déficit hídrico em diferentes níveis de severidade;\n\n"
+        "Inclinação, tombamento e quebra de árvores devido a ocorrência de vendaval.\n\n"
+        "Para as ocorrências foram observados danos em reboleiras de diferentes tamanhos de área (ha) e intensidade dentro dos talhões."
+    )
+ 
+def get_licoes_text(ocorrencia):
+    """Retorna o texto fixo de lições aprendidas para todas as ocorrências"""
+    return (
+        "As visitas de campo juntamente com imagens de drones são fundamentais para a tomada de decisão. "
+        "As ocorrências de sinistros são dinâmicas e, desta forma, é fundamental aguardar o tempo recomendado para a verificação da recuperação das plantas bem como manter as informações atualizadas, especialmente nas ocorrências de Déficit Hídrico e Incêndios Florestais. "
+        "A efetivação da baixa e tratativas devem ocorrer imediatamente após a liberação do laudo, evitando-se retrabalho e dificuldades na rastreabilidade de todo o processo, assim como o comprometimento da produtividade no site."
+    )
+ 
+def fill_header_fields(driver, wait, nucleo, ocorrencia):
+    """Preenche os campos de cabeçalho do formulário"""
+    try:
+        print("\n" + "="*60)
+        print("PREENCHIMENTO DOS CAMPOS DE CABEÇALHO")
+        print("="*60)
+       
+        # Campo Objetivo
+        print("Preenchendo campo 'Objetivo'...")
+        objetivo_text = f"O presente relatório foi elaborado por solicitação do GEOCAT com o objetivo de avaliar os efeitos dos sinistros nos plantios do Núcleo {nucleo} e determinar as recomendações para as áreas avaliadas em campo pela área de Mensuração."
+       
+        objetivo_field = wait.until(
+            EC.element_to_be_clickable((By.XPATH, '//*[@id="__next"]/div[3]/div/div/div/div[2]/div/div/div/div/div[2]/div/div/form/div[1]/div[3]/div/div[1]/div/div/textarea'))
+        )
+        objetivo_field.clear()
+        objetivo_field.send_keys(objetivo_text)
+        print("✓ Campo 'Objetivo' preenchido com sucesso!")
+       
+        # Aguardar um pouco
+        time.sleep(2)
+       
+        # Campo Diagnóstico
+        print("Preenchendo campo 'Diagnóstico'...")
+        diagnostico_text = get_diagnostico_text(ocorrencia)
+       
+        diagnostico_field = wait.until(
+            EC.element_to_be_clickable((By.XPATH, '//*[@id="__next"]/div[3]/div/div/div/div[2]/div/div/div/div/div[2]/div/div/form/div[1]/div[3]/div/div[2]/div/div/textarea'))
+        )
+        diagnostico_field.clear()
+        diagnostico_field.send_keys(diagnostico_text)
+        print("✓ Campo 'Diagnóstico' preenchido com sucesso!")
+       
+        # Aguardar um pouco
+        time.sleep(2)
+       
+        # Campo Lições Aprendidas
+        print("Preenchendo campo 'Lições Aprendidas'...")
+        licoes_text = get_licoes_text(ocorrencia)
+       
+        licoes_field = wait.until(
+            EC.element_to_be_clickable((By.XPATH, '//*[@id="__next"]/div[3]/div/div/div/div[2]/div/div/div/div/div[2]/div/div/form/div[1]/div[3]/div/div[3]/div/div/textarea'))
+        )
+        licoes_field.clear()
+        licoes_field.send_keys(licoes_text)
+        print("✓ Campo 'Lições Aprendidas' preenchido com sucesso!")
+       
+        print("\n✓ Todos os campos de cabeçalho foram preenchidos com sucesso!")
+        time.sleep(1)
+        pyautogui.press('tab')
+        time.sleep(1)
+        pyautogui.press('tab')
+        return True
+       
+    except TimeoutException:
+        print("⚠ Timeout: Campos não encontrados no tempo esperado.")
+        return False
+    except Exception as e:
+        print(f"⚠ Erro ao preencher campos: {e}")
+        return False
+ 
+def get_tipo_dano_steps(ocorrencia):
+    """Retorna o número de setas para baixo necessárias baseado na ocorrência"""
+    if "DEFICIT HIDRICO" in ocorrencia.upper():
+        return 2
+    elif "GEADA" in ocorrencia.upper():
+        return 6
+    elif "INCENDIO" in ocorrencia.upper():
+        return 7
+    elif "VENDAVAL" in ocorrencia.upper():
+        return 9
+    else:
+        return 1  # Default
+ 
+def get_severidade_steps(severidade):
+    """Retorna o número de setas para baixo necessárias baseado na severidade"""
+    if "BAIXO" in severidade.upper():
+        return 0
+    elif "MEDIO" in severidade.upper():
+        return 1
+    elif "ALTO" in severidade.upper():
+        return 2
+    else:
+        return 1  # Default
+ 
+def get_recomendacao_steps(recomendacao, idade, incidencia):
+    """Retorna o número de setas para baixo necessárias baseado na recomendação"""
+    if "Avaliar (manter/erradicar)" in recomendacao:
+        return 6
+    elif "Erradicar" in recomendacao:
+        if idade >= 3 and incidencia < 100:
+            return 2
+        elif idade >= 3 and incidencia == 100:
+            return 1
+        elif idade < 3 and incidencia == 100:
+            return 4
+        elif idade < 3 and incidencia < 100:
+            return 5
+        else:
+            return 2  # Default
+    elif "Manter ciclo/rotação" in recomendacao:
+        return 3
+    else:  # (vazio) ou outros
+        return 6
+ 
+def process_ups_data(driver, wait, df_filtrado):
+    """Lança todas as UPs do DataFrame filtrado usando navegação por teclado"""
+    try:
+        if not HAS_PYAUTOGUI:
+            print("Erro: PyAutoGUI não está instalado. Execute: pip install pyautogui")
+            return False
+       
+        print("\n" + "="*60)
+        print("LANÇAMENTO DAS UPs")
+        print("="*60)
+       
+        # Obter lista de UPs únicas com seus dados
+        total_ups = len(df_filtrado)
+       
+        print(f"Iniciando lançamento de {total_ups} UPs...")
+        print("IMPORTANTE: Não mova o mouse durante o processo!")
+       
+        # Aguardar confirmação
+        input("Pressione Enter quando estiver pronto para iniciar o lançamento automático...")
+       
+        # Aguardar um pouco e rolar para baixo
+        time.sleep(2)
+        driver.execute_script("window.scrollBy(0, 500);")
+        time.sleep(2)
+       
+        # Contador de UPs processadas
+        successful_ups = 0
+        failed_ups = 0
+       
+        # Iterar sobre todas as linhas do DataFrame
+        for index, row in df_filtrado.iterrows():
+            up = row['UP']
+            ocorrencia = row['Ocorrência Predominante']
+            severidade = row['Severidade Predominante']
+            recomendacao = row['Recomendacao']
+            idade = row['Idade']
+            incidencia = row['Incidencia']
+           
+            if not up:
+                print(f"UP {index + 1}: Valor vazio, pulando...")
+                failed_ups += 1
+                continue
+           
+            try:
+                print(f"Processando UP {index + 1}/{total_ups}: {up}")
+                print(f"  - Ocorrência: {ocorrencia}")
+                print(f"  - Severidade: {severidade}")
+                print(f"  - Recomendação: {recomendacao}")
+                print(f"  - Idade: {idade}, Incidência: {incidencia}%")
+               
+                # 1. Clicar no campo UP e digitar valor aparecer aqui
+                #pyautogui.click(425, 792) # monitor grande
+                pyautogui.click(227, 715) # monitor pequeno
+                time.sleep(1)
+                pyautogui.typewrite(str(up))
+                time.sleep(1)
+                pyautogui.press('Enter')
+                time.sleep(1)
+               
+                               
+                # 3. Apertar Tab novamente para ir para seleção do tipo de dano
+                pyautogui.press('tab')
+                time.sleep(1)
+               
+                # 4. Selecionar tipo de dano baseado na ocorrência
+                tipo_dano_steps = get_tipo_dano_steps(ocorrencia)
+                print(f"  - Selecionando tipo de dano: {tipo_dano_steps} setas para baixo")
+               
+                for _ in range(tipo_dano_steps):
+                    pyautogui.press('down')
+                    time.sleep(0.2)
+               
+                pyautogui.press('space')
+                time.sleep(1)
+               
+                # 5. Selecionar Ocorrência na UP
+                print(f"  - Selecionando ocorrência na UP")
+                pyautogui.press('tab')
+                time.sleep(1)
+                pyautogui.press('down')
+                time.sleep(1)
+                pyautogui.press('space')
+                time.sleep(1)
+               
+                # 6. Selecionar Severidade
+                print(f"  - Selecionando severidade: {severidade} e Incidencia: {incidencia}%")
+                pyautogui.press('tab')
+                time.sleep(1)
+                pyautogui.press('tab')
+                time.sleep(1)
+                
+                # Ajusta incidência para 100% se recomendação for "Manter ciclo"
+                if "Manter ciclo" in recomendacao:
+                    pyautogui.typewrite("100.00")
+                else:
+                    pyautogui.typewrite(f"{incidencia * 100:.2f}")
+                
+                time.sleep(1)
+                pyautogui.press('tab')
+                time.sleep(1)
+                pyautogui.press('down')
+                time.sleep(1)
+               
+                severidade_steps = get_severidade_steps(severidade)
+                for _ in range(severidade_steps):
+                    pyautogui.press('down')
+                    time.sleep(0.2)
+               
+                pyautogui.press('space')
+                time.sleep(1)
+               
+                # 7. Selecionar Recomendação
+                print(f"  - Selecionando recomendação: {recomendacao}")
+                pyautogui.press('tab')
+                time.sleep(1)
+               
+                recomendacao_steps = get_recomendacao_steps(recomendacao, idade, incidencia)
+                print(f"    (Idade: {idade}, Incidência: {incidencia}% -> {recomendacao_steps} setas)")
+               
+                for _ in range(recomendacao_steps):
+                    pyautogui.press('down')
+                    time.sleep(0.2)
+               
+                pyautogui.press('space')
+                time.sleep(1)
+               
+                # 8. Clicar no botão para adicionar UP
+                try:
+                    add_button = wait.until(
+                        EC.element_to_be_clickable((By.XPATH, '//*[@id="__next"]/div[3]/div/div/div/div[2]/div/div/div/div/div[2]/div/div/form/div[2]/div/div[3]/button'))
+                    )
+                    add_button.click()
+                    time.sleep(2)
+                except:
+                    print(f"  ⚠ Erro ao clicar no botão de adicionar para UP {up}")
+               
+                # 9. Rolar página
+                driver.execute_script("window.scrollBy(0, 500);")
+                time.sleep(2)
+               
+                successful_ups += 1
+                print(f"✓ UP {up} processada com sucesso!")
+               
+            except Exception as e:
+                print(f"⚠ Erro ao processar UP {up}: {e}")
+                failed_ups += 1
+       
+        # Relatório do lançamento
+        print(f"\n" + "="*50)
+        print("RELATÓRIO DO LANÇAMENTO DE UPs")
+        print("="*50)
+        print(f"Total de UPs: {total_ups}")
+        print(f"UPs lançadas com sucesso: {successful_ups}")
+        print(f"UPs que falharam: {failed_ups}")
+        print(f"Taxa de sucesso: {(successful_ups/total_ups)*100:.1f}%")
+       
+        return True
+       
+    except Exception as e:
+        print(f"Erro durante o lançamento das UPs: {e}")
+        return False
+ 
+def fill_final_considerations(driver, wait, df_filtrado):
+    """Preenche o campo de considerações finais com texto fixo"""
+    try:
+        print("\n" + "="*60)
+        print("PREENCHIMENTO DAS CONSIDERAÇÕES FINAIS")
+        print("="*60)
+        
+        # Texto fixo para as considerações finais
+        consideracoes_text = (
+            "Face ao exposto, com a avaliação de ha, recomenda-se:\n\n"
+            "Limpeza Técnica\n\n"
+            "XX,xx ha de área total das UPs;\n\n"
+            "XX,xx ha de área parcial das UPs.\n\n"
+            "Antecipação de Colheita\n\n"
+            "XX,xx ha de área total das UPs;\n\n"
+            "XX,xx ha de área parcial das UPs.\n\n"
+            "Manutenção do Ciclo e Rotação\n\n"
+            "XX,xx ha de área parcial da UP.\n\n"
+            "O valor total imobilizado a ser apurado como prejuízo será de R$ X (XX reais e XXXX centavos), "
+            "informado pela área Contábil. Vale ressaltar que o montante descrito pode sofrer alterações "
+            "entre o período de emissão, assinaturas e devida baixa dos ativos; no momento da baixa, a "
+            "Gestão Patrimonial fará a atualização e manterá comprovação anexa ao laudo. A destinação da "
+            "madeira e eventuais dificuldades operacionais não foram objeto deste laudo.\n\n"
+            "As recomendações são por UP, considerando a ocorrência de maior abrangência; pode, contudo, "
+            "existir mais de um tipo de sinistro na mesma UP, sendo necessária uma avaliação detalhada do "
+            "microplanejamento quanto ao aproveitamento da madeira.\n\n"
+            "O laudo foi elaborado com base em croquis e fotos fornecidos pela equipe de mensuração florestal. "
+            "A ausência de imagens aéreas de alta resolução e a falta de visitas de campo por parte dos "
+            "extensionistas prejudicam a avaliação detalhada das UPs. Assim, se a equipe de Silvicultura, "
+            "durante a execução das ações recomendadas, constatar divergências em campo, recomenda-se delimitar "
+            "a área divergente a ser aproveitada e solicitar uma análise adicional à equipe de extensão tecnológica."
+        )
+        
+        print("Preenchendo campo 'Considerações Finais'...")
+       
+        # Localizar e preencher o campo
+        consideracoes_field = wait.until(
+            EC.element_to_be_clickable((By.XPATH, '//*[@id="__next"]/div[3]/div/div/div/div[2]/div/div/div/div/div[2]/div/div/form/div[1]/div[3]/div/div[4]/div/div/textarea'))
+        )
+        consideracoes_field.clear()
+        consideracoes_field.send_keys(consideracoes_text)
+       
+        print("✓ Campo 'Considerações Finais' preenchido com sucesso!")
+        return True
+       
+    except TimeoutException:
+        print("⚠ Timeout: Campo de considerações finais não encontrado.")
+        return False
+    except Exception as e:
+        print(f"⚠ Erro ao preencher considerações finais: {e}")
+        prosseguir = input("Deseja prosseguir mesmo assim? (s/n): ").strip().lower()
+        if prosseguir not in ['s', 'sim', 'y', 'yes']:
+            print("Processo interrompido pelo usuário devido ao erro ao preencher considerações finais.")
+            return False
+        return True
+ 
+def display_data_table(df_filtrado):
+    """Exibe tabela formatada com os dados processados"""
+    try:
+        print("\n" + "="*120)
+        print("TABELA DE DADOS PROCESSADOS")
+        print("="*120)
+
+        # Colunas que queremos exibir
+        required_columns = [
+            'UP', 'Nucleo', 'Idade', 'Ocorrência Predominante',
+            'Severidade Predominante', 'Area UP', 'Area Liquida',
+            'Incidencia', 'Recomendacao'
+        ]
+
+        # Verifica se todas as colunas existem
+        missing_columns = [c for c in required_columns if c not in df_filtrado.columns]
+        if missing_columns:
+            print(f"⚠ Aviso: Colunas ausentes: {missing_columns}")
+            print("Exibindo somente as colunas disponíveis…")
+        available_columns = [c for c in required_columns if c in df_filtrado.columns]
+
+        # Copia apenas as colunas disponíveis
+        display_df = df_filtrado[available_columns].copy()
+
+        # Formata valores numéricos
+        for col in ['Area UP', 'Area Liquida', 'Incidencia']:
+            if col in display_df.columns:
+                display_df[col] = display_df[col].round(2)
+
+        # Cabeçalho da tabela
+        header = ""
+        col_width = {
+            'UP': 8, 'Nucleo': 15, 'Idade': 8, 'Ocorrência Predominante': 20,
+            'Severidade Predominante': 15, 'Area UP': 10, 'Area Liquida': 10,
+            'Incidencia': 10, 'Recomendacao': 25
+        }
+        for col in available_columns:
+            header += f"{col:<{col_width[col]}}|"
+        print(header)
+        print("-" * len(header))
+
+        # Linhas da tabela
+        for _, row in display_df.iterrows():
+            line = ""
+            for col in available_columns:
+                val = str(row[col])[:col_width[col]-2] + ".." \
+                      if len(str(row[col])) > col_width[col] else str(row[col])
+                line += f"{val:<{col_width[col]}}|"
+            print(line)
+
+        # Linha separadora
+        print("-" * len(header))
+
+        # Resumo estatístico
+        print("\nRESUMO ESTATÍSTICO:")
+        print(f"• Total de UPs: {len(display_df)}")
+        if 'Area UP' in display_df.columns:
+            print(f"• Área total UP: {display_df['Area UP'].sum():.2f} ha")
+        if 'Area Liquida' in display_df.columns:
+            print(f"• Área líquida total: {display_df['Area Liquida'].sum():.2f} ha")
+        if 'Recomendacao' in display_df.columns:
+            print(f"• Tipos de recomendação: {display_df['Recomendacao'].nunique()}")
+
+        print("="*120)
+        return True
+
+    except Exception as e:
+        print(f"Erro ao exibir tabela de dados: {e}")
+        return False
+ 
+# =========================================================================
+# FUNÇÃO PRINCIPAL
+# =========================================================================
+ 
+def open_fenix_site():
+    """Abre o site Fenix Florestal e executa todo o processo"""
+   
+    # Testar conectividade (não bloquear se falhar)
+    test_connectivity()
+   
+    # Configurar opções do Chrome
+    options = Options()
+    options.add_argument("--no-sandbox")
+    options.add_argument("--disable-dev-shm-usage")
+    options.add_argument("--window-size=1920,1080")
+    options.add_argument("--disable-web-security")
+    options.add_argument("--allow-running-insecure-content")
+    options.add_argument("--ignore-certificate-errors")
+    options.add_argument("--ignore-ssl-errors")
+    options.add_argument("--disable-extensions")
+    options.add_argument("--no-proxy-server")
+   
+    driver = None
+   
+    try:
+        print("Inicializando o navegador Chrome...")
+       
+        # Tentar primeira abordagem: WebDriver Manager com cache offline
+        try:
+            print("Tentando usar WebDriver Manager...")
+            service = Service(ChromeDriverManager().install())
+            driver = webdriver.Chrome(service=service, options=options)
+        except Exception as e1:
+            print(f"WebDriver Manager falhou: {e1}")
+           
+            # Segunda abordagem: Chrome sem especificar caminho do driver
+            try:
+                print("Tentando usar Chrome sem driver específico...")
+                driver = webdriver.Chrome(options=options)
+            except Exception as e2:
+                print(f"Chrome padrão falhou: {e2}")
+               
+                # Terceira abordagem: procurar ChromeDriver no PATH
+                print("Tentando encontrar ChromeDriver no sistema...")
+                driver = webdriver.Chrome(options=options)
+       
+        if driver is None:
+            raise Exception("Não foi possível inicializar o Chrome")
+       
+        # Definir timeout para carregamento de página
+        driver.set_page_load_timeout(30)
+        wait = WebDriverWait(driver, 10)
+       
+        print(f"Abrindo a página: {FENIX_URL}")
+        driver.get(FENIX_URL)
+       
+        print("Página aberta com sucesso!")
+        print("Aguardando carregamento da página...")
+        time.sleep(5)
+       
+        # Tentar clicar no botão de login
+        try:
+            print("Procurando pelo botão de login...")
+            time.sleep(1)
+            # Aguardar o botão aparecer e ser clicável
+            login_button = wait.until(
+                EC.element_to_be_clickable((By.XPATH, '//*[@id="__next"]/div[1]/div[2]/button'))
+            )
+            time.sleep(5)
+            print("Botão de login encontrado! Clicando...")
+            login_button.click()
+            
+            # Aguardar campo de email aparecer
+            print("Aguardando campo de email...")
+            email_field = wait.until(
+                EC.presence_of_element_located((By.XPATH, '//*[@id="i0116"]'))
+            )
+            email_field.send_keys("joaoco@suzano.com.br")
+            time.sleep(5)
+            # Clicar no botão Avançar após email
+            print("Clicando em Avançar...")
+            next_button = wait.until(
+                EC.element_to_be_clickable((By.XPATH, '//*[@id="idSIButton9"]'))
+            )
+            time.sleep(5)
+            next_button.click()
+            time.sleep(1)
+            
+            # Aguardar campo de senha aparecer
+            print("Aguardando campo de senha...")
+            password_field = wait.until(
+                EC.presence_of_element_located((By.XPATH, '//*[@id="i0118"]'))
+            )
+            time.sleep(1)
+            password_field.send_keys("MFTUbilo192837")
+            time.sleep(1)
+            # Clicar no botão Entrar após senha
+            print("Clicando em Entrar...")
+            signin_button = wait.until(
+                EC.element_to_be_clickable((By.XPATH, '//*[@id="idSIButton9"]'))
+            )
+            signin_button.click()
+           
+            print("✓ Login inicial realizado com sucesso!")
+            print("\n" + "="*60)
+            print("AGUARDANDO AUTENTICAÇÃO DE DOIS FATORES")
+            print("="*60)
+            print("Por favor, complete a autenticação de dois fatores no navegador.")
+            print("Após fazer login, pressione Enter aqui para continuar...")
+            print("="*60)
+           
+            # Aguardar o usuário completar a autenticação
+            input("Pressione Enter após completar a autenticação...")
+           
+            print("Continuando com o script...")
+           
+            while True:  # Loop principal para permitir múltiplos lançamentos
+                # Navegar para seção de upload
+                if navigate_to_upload_section(driver, wait):
+                   
+                    # Aguardar um pouco para a página carregar
+                    time.sleep(3)
+                   
+                    # Selecionar arquivo Excel
+                    file_path, df = select_excel_file()
+                   
+                    if df is not None:
+                        # Filtrar por núcleo e ocorrência
+                        df_filtrado, total_registros, nucleo_selecionado, ocorrencia_selecionada = filter_by_nucleo_and_ocorrencia(df)
+                       
+                        if df_filtrado is not None and total_registros > 0:
+                            print(f"\n✓ Processo preparado!")
+                            print(f"Arquivo: {file_path}")
+                            print(f"Núcleo: {nucleo_selecionado}")
+                            print(f"Ocorrência: {ocorrencia_selecionada}")
+                            print(f"Registros a serem lançados: {total_registros}")
+                           
+                            # Aguardar confirmação para prosseguir
+                            confirmar = input(f"\nDeseja prosseguir com o lançamento de {total_registros} registros? (s/n): ").strip().lower()
+                           
+                            if confirmar in ['s', 'sim', 'y', 'yes']:
+                                print("\n" + "="*60)
+                                print("IMPORTANTE: PREENCHIMENTO MANUAL DO CABEÇALHO")
+                                print("="*60)
+                                print("Antes de iniciar o lançamento automático das UPs,")
+                                print("você precisa preencher manualmente o cabeçalho do formulário.")
+                                print("\nPor favor:")
+                                print("1. Preencha todos os campos necessários do cabeçalho")
+                                print("2. NÃO salve ainda")
+                                print("3. Deixe o formulário aberto")
+                               
+                                input("\nPressione Enter quando terminar o preenchimento manual...")
+                               
+                                # Preencher campos automaticamente
+                                if fill_header_fields(driver, wait, nucleo_selecionado, ocorrencia_selecionada):
+                                    print("\n✓ Cabeçalho preenchido automaticamente!")
+                                   
+                                    # Perguntar se deseja lançar as UPs
+                                    lancar_ups = input("\nDeseja iniciar o lançamento das UPs? (s/n): ").strip().lower()
+                                   
+                                    if lancar_ups in ['s', 'sim', 'y', 'yes']:
+                                        if process_ups_data(driver, wait, df_filtrado):
+                                            print("\n✓ UPs lançadas com sucesso!")
+                                           
+                                            # Preencher considerações finais
+                                            if fill_final_considerations(driver, wait, df_filtrado):
+                                                print("\n" + "="*60)
+                                                print("PROCESSO CONCLUÍDO COM SUCESSO!")
+                                                print("="*60)
+                                                print("✓ Cabeçalho preenchido")
+                                                print("✓ UPs lançadas")
+                                                print("✓ Considerações finais preenchidas")
+                                                print("\n🔍 IMPORTANTE: REVISÃO NECESSÁRIA")
+                                                print("="*60)
+                                                print("Por favor, faça uma revisão completa de todos os laudos lançados!")
+                                                print("Verifique:")
+                                                print("• Se todas as UPs foram lançadas corretamente")
+                                                print("• Se os dados estão consistentes")
+                                                print("• Se as recomendações estão adequadas")
+                                                print("• Se não há erros de digitação")
+                                                
+                                                # Forçar exibição da tabela de dados
+                                                print("\n" + "="*60)
+                                                print("DADOS PROCESSADOS PARA REVISÃO")
+                                                print("="*60)
+                                                display_data_table(df_filtrado)
+                                                
+                                                print("\nApós a revisão, você pode salvar o laudo.")
+                                        else:
+                                            print("⚠ Erro no lançamento das UPs.")
+                                    else:
+                                        print("Lançamento das UPs cancelado pelo usuário.")
+                                else:
+                                    print("⚠ Erro no preenchimento automático do cabeçalho.")
+                            else:
+                                print("Processo cancelado pelo usuário.")
+                        else:
+                            print("Processo interrompido - dados inválidos.")
+                    else:
+                        print("Processo interrompido - arquivo não selecionado.")
+                else:
+                    print("Falha na navegação para seção de upload.")
+                
+                # Perguntar se deseja fazer outro lançamento
+                continuar = input("\nDeseja fazer outro lançamento? (s/n): ").strip().lower()
+                if continuar not in ['s', 'sim', 'y', 'yes']:
+                    break
+           
+        except TimeoutException:
+            print("⚠ Botão de login não encontrado no tempo esperado.")
+            print("Verifique se a página carregou corretamente.")
+            # Perguntar se deseja tentar seguir para o próximo passo
+            seguir = input("Deseja tentar seguir para o próximo passo mesmo assim? (s/n): ").strip().lower()
+            if seguir in ['s', 'sim', 'y', 'yes']:
+                if navigate_to_upload_section(driver, wait):
+                    time.sleep(3)
+                    file_path, df = select_excel_file()
+                    if df is not None:
+                        df_filtrado, total_registros, nucleo_selecionado, ocorrencia_selecionada = filter_by_nucleo_and_ocorrencia(df)
+                        if df_filtrado is not None and total_registros > 0:
+                            print(f"\n✓ Processo preparado!")
+                            print(f"Arquivo: {file_path}")
+                            print(f"Núcleo: {nucleo_selecionado}")
+                            print(f"Ocorrência: {ocorrencia_selecionada}")
+                            print(f"Registros a serem lançados: {total_registros}")
+                            confirmar = input(f"\nDeseja prosseguir com o lançamento de {total_registros} registros? (s/n): ").strip().lower()
+                            if confirmar in ['s', 'sim', 'y', 'yes']:
+                                print("\n" + "="*60)
+                                print("IMPORTANTE: PREENCHIMENTO MANUAL DO CABEÇALHO")
+                                print("="*60)
+                                print("Antes de iniciar o lançamento automático das UPs,")
+                                print("você precisa preencher manualmente o cabeçalho do formulário.")
+                                print("\nPor favor:")
+                                print("1. Preencha todos os campos necessários do cabeçalho")
+                                print("2. NÃO salve ainda")
+                                print("3. Deixe o formulário aberto")
+                                input("\nPressione Enter quando terminar o preenchimento manual...")
+                                if fill_header_fields(driver, wait, nucleo_selecionado, ocorrencia_selecionada):
+                                    print("\n✓ Cabeçalho preenchido automaticamente!")
+                                    lancar_ups = input("\nDeseja iniciar o lançamento das UPs? (s/n): ").strip().lower()
+                                    if lancar_ups in ['s', 'sim', 'y', 'yes']:
+                                        if process_ups_data(driver, wait, df_filtrado):
+                                            print("\n✓ UPs lançadas com sucesso!")
+                                            if fill_final_considerations(driver, wait, df_filtrado):
+                                                print("\n" + "="*60)
+                                                print("PROCESSO CONCLUÍDO COM SUCESSO!")
+                                                print("="*60)
+                                                print("✓ Cabeçalho preenchido")
+                                                print("✓ UPs lançadas")
+                                                print("✓ Considerações finais preenchidas")
+                                                print("\n🔍 IMPORTANTE: REVISÃO NECESSÁRIA")
+                                                print("="*60)
+                                                print("Por favor, faça uma revisão completa de todos os laudos lançados!")
+                                                print("Verifique:")
+                                                print("• Se todas as UPs foram lançadas corretamente")
+                                                print("• Se os dados estão consistentes")
+                                                print("• Se as recomendações estão adequadas")
+                                                print("• Se não há erros de digitação")
+                                                print("\n" + "="*60)
+                                                print("DADOS PROCESSADOS PARA REVISÃO")
+                                                print("="*60)
+                                                display_data_table(df_filtrado)
+                                                print("\nApós a revisão, você pode salvar o laudo.")
+                                        else:
+                                            print("⚠ Erro no lançamento das UPs.")
+                                    else:
+                                        print("Lançamento das UPs cancelado pelo usuário.")
+                                else:
+                                    print("⚠ Erro no preenchimento automático do cabeçalho.")
+                            else:
+                                print("Processo cancelado pelo usuário.")
+                        else:
+                            print("Processo interrompido - dados inválidos.")
+                    else:
+                        print("Processo interrompido - arquivo não selecionado.")
+                else:
+                    print("Falha na navegação para seção de upload.")
+            else:
+                print("\nNavegador permanece aberto...")
+                input("Pressione Enter para fechar o navegador...")
+   
+    except Exception as e:
+        print(f"Erro ao abrir o site: {e}")
+        print("\nSOLUÇÕES POSSÍVEIS:")
+        print("1. Baixe o ChromeDriver manualmente:")
+        print("   - Vá em: https://chromedriver.chromium.org/")
+        print("   - Baixe a versão compatível com seu Chrome")
+        print("   - Coloque o chromedriver.exe na mesma pasta deste script")
+        print("2. Ou adicione o ChromeDriver ao PATH do Windows")
+        print("3. Verifique se o Chrome está instalado")
+       
+    finally:
+        if driver:
+            fechar = input("\nDeseja fechar o navegador? (s/n): ").strip().lower()
+            if fechar in ['s', 'sim', 'y', 'yes']:
+                driver.quit()
+                print("Navegador fechado.")
+            else:
+                print("Navegador permanecerá aberto para uso manual.")
+
+# =========================================================================
+# EXECUÇÃO
+# =========================================================================
+
+if __name__ == "__main__":
+    open_fenix_site()

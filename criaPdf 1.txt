@@ -1,0 +1,561 @@
+import os
+import sys
+from urllib.parse import quote
+
+# Try to import required libraries with helpful error messages
+try:
+    from office365.runtime.auth.authentication_context import AuthenticationContext
+    from office365.sharepoint.client_context import ClientContext
+    from office365.sharepoint.files.file import File
+except ImportError as e:
+    print("Erro: Biblioteca office365 não encontrada.")
+    print("Execute o comando abaixo no terminal:")
+    print(f"{sys.executable} -m pip install office365-REST-Python-Client")
+    sys.exit(1)
+
+try:
+    from fpdf import FPDF
+except ImportError as e:
+    print("Erro: Biblioteca fpdf não encontrada.")
+    print("Execute o comando abaixo no terminal:")
+    print(f"{sys.executable} -m pip install fpdf2")
+    sys.exit(1)
+
+try:
+    from PIL import Image
+except ImportError as e:
+    print("Erro: Biblioteca PIL/Pillow não encontrada.")
+    print("Execute o comando abaixo no terminal:")
+    print(f"{sys.executable} -m pip install Pillow")
+    sys.exit(1)
+
+try:
+    import pandas as pd
+except ImportError as e:
+    print("Erro: Biblioteca pandas não encontrada.")
+    print("Execute o comando abaixo no terminal:")
+    print(f"{sys.executable} -m pip install pandas")
+    sys.exit(1)
+
+try:
+    import openpyxl
+except ImportError as e:
+    print("Erro: Biblioteca openpyxl não encontrada.")
+    print("Execute o comando abaixo no terminal:")
+    print(f"{sys.executable} -m pip install openpyxl")
+    sys.exit(1)
+
+import tkinter as tk
+from tkinter import filedialog
+import getpass
+
+# =========================================================================
+# CONFIGURAÇÕES
+# =========================================================================
+
+site_url = "https://suzano.sharepoint.com/sites/TOPS-VALIDAO"
+username = "joaoco@suzano.com.br"
+
+# =========================================================================
+# FUNÇÃO PARA CONVERTER URL DO SHAREPOINT
+# =========================================================================
+
+def convert_sharepoint_url_to_path(url):
+    """
+    Converte uma URL do SharePoint copiada do navegador para o caminho relativo do servidor.
+    """
+    if not url:
+        return ""
+    
+    # Remove parâmetros da URL (?csf=1&web=1&e=...)
+    if '?' in url:
+        url = url.split('?')[0]
+    
+    # Se for uma URL completa, extrair apenas o caminho
+    if url.startswith('https://suzano.sharepoint.com/:f:/r/'):
+        # Remove o prefixo da URL de compartilhamento
+        path = url.replace('https://suzano.sharepoint.com/:f:/r/', '/')
+        # Decodifica caracteres especiais
+        path = path.replace('%20', ' ').replace('%2520', ' ')
+        return path
+    elif url.startswith('https://suzano.sharepoint.com/'):
+        # Remove apenas o domínio
+        path = url.replace('https://suzano.sharepoint.com', '')
+        # Decodifica caracteres especiais
+        path = path.replace('%20', ' ').replace('%2520', ' ')
+        return path
+    elif url.startswith('/sites/'):
+        # Já é um caminho relativo, apenas decodifica
+        return url.replace('%20', ' ').replace('%2520', ' ')
+    else:
+        # Assume que já está no formato correto
+        return url
+
+# =========================================================================
+# 1) AUTENTICAÇÃO NO SHAREPOINT
+# =========================================================================
+
+def connect_to_sharepoint(site_url, username, password):
+    ctx_auth = AuthenticationContext(site_url)
+    if ctx_auth.acquire_token_for_user(username, password):
+        return ClientContext(site_url, ctx_auth)
+    else:
+        raise Exception("Erro ao autenticar. Verifique suas credenciais.")
+
+# =========================================================================
+# 2) LISTAR ARQUIVOS (SEM SUBPASTAS)
+# =========================================================================
+
+def list_files(ctx, folder_url):
+    folder = ctx.web.get_folder_by_server_relative_url(folder_url)
+    files = folder.files
+    ctx.load(files)
+    ctx.execute_query()
+    return [(f.properties["Name"], f.properties["ServerRelativeUrl"]) for f in files]
+
+# =========================================================================
+# 3) BAIXAR ARQUIVO DO SHAREPOINT
+# =========================================================================
+
+def download_file(ctx, server_relative_file_url, local_path):
+    response = File.open_binary(ctx, server_relative_file_url)
+    with open(local_path, "wb") as local_file:
+        local_file.write(response.content)
+
+# =========================================================================
+# 4) FUNÇÃO PARA OTIMIZAR E REDIMENSIONAR IMAGEM
+# =========================================================================
+
+def optimize_and_resize_image(image_path, max_width_px=800, max_height_px=600, quality=70):
+    """
+    Otimiza uma imagem redimensionando e comprimindo para reduzir tamanho do arquivo.
+    Cria uma versão otimizada temporária da imagem.
+    
+    Args:
+        image_path: Caminho da imagem original
+        max_width_px: Largura máxima em pixels
+        max_height_px: Altura máxima em pixels  
+        quality: Qualidade JPEG (1-100, menor = arquivo menor)
+    
+    Returns:
+        tuple: (caminho_otimizado, largura_final_pt, altura_final_pt)
+    """
+    try:
+        with Image.open(image_path) as img:
+            # Converter para RGB se necessário (para salvar como JPEG)
+            if img.mode != 'RGB':
+                img = img.convert('RGB')
+            
+            original_width, original_height = img.size
+            
+            # Calcular nova dimensão mantendo proporção
+            scale_width = max_width_px / original_width
+            scale_height = max_height_px / original_height
+            scale = min(scale_width, scale_height)
+            
+            new_width_px = int(original_width * scale)
+            new_height_px = int(original_height * scale)
+            
+            # Redimensionar a imagem
+            img_resized = img.resize((new_width_px, new_height_px), Image.Resampling.LANCZOS)
+            
+            # Criar nome do arquivo temporário otimizado
+            base_name = os.path.splitext(image_path)[0]
+            optimized_path = f"{base_name}_optimized.jpg"
+            
+            # Salvar imagem otimizada
+            img_resized.save(optimized_path, 'JPEG', quality=quality, optimize=True)
+            
+            # Converter pixels para pontos (aproximadamente 1 pixel = 0.75 pontos)
+            width_pt = int(new_width_px * 0.75)
+            height_pt = int(new_height_px * 0.75)
+            
+            return optimized_path, width_pt, height_pt
+            
+    except Exception as e:
+        print(f"Erro ao otimizar imagem {image_path}: {e}")
+        # Retornar valores padrão em caso de erro
+        return image_path, 400, 300
+
+def get_file_size_mb(file_path):
+    """Retorna o tamanho do arquivo em MB"""
+    try:
+        size_bytes = os.path.getsize(file_path)
+        size_mb = size_bytes / (1024 * 1024)
+        return round(size_mb, 2)
+    except:
+        return 0
+
+# =========================================================================
+# 5) CRIAR O PDF OTIMIZADO COM IMAGENS COMPRIMIDAS
+# =========================================================================
+
+def create_pdf(up_data, image_path, croqui_path, pdf_path):
+    """
+    Cria um PDF otimizado com imagens comprimidas para manter tamanho abaixo de 9MB.
+    """
+    # Lista para armazenar arquivos temporários para limpeza posterior
+    temp_files = []
+    
+    try:
+        # PDF de 1920 pt de largura e 1080 pt de altura (como slide 16:9)
+        pdf = FPDF(unit='pt', format=(1920, 1080))
+        pdf.add_page()
+        pdf.set_font("Arial", size=12)  # Fonte um pouco menor para economizar espaço
+
+        # Montar o texto em uma única string, separado por '||'
+        text_line = (
+            f"UP-C-R: {up_data['UP-C-R']} || "
+            f"UP: {up_data['UP']} || "
+            f"Nucleo: {up_data['Nucleo']} || "
+            f"Data_Ocorrência: {up_data['Data_Ocorrência']} || "
+            f"Idade: {up_data['Idade']} || "
+            f"Quant.Ocorrências: {up_data['Quant.Ocorrências']} || "
+            f"Ocorrência Predominante: {up_data['Ocorrência Predominante']} || "
+            f"Severidade Predominante: {up_data['Severidade Predominante']} || "
+            f"Area UP: {up_data['Area UP']} || "
+            f"Area Liquida: {up_data['Area Liquida']} || "
+            f"Incidencia: {up_data['Incidencia']} || "
+            f"Quantidade de Imagens*: {up_data['Quantidade de Imagens*']} || "
+            f"Recomendacao: {up_data['Recomendacao']}"
+        )
+
+        # Usar multi_cell para quebrar linha automaticamente
+        pdf.multi_cell(0, 25, text_line)  # Altura de linha menor
+
+        # Configurações para otimização das imagens
+        # Tamanhos em pixels (menores para reduzir tamanho do arquivo)
+        max_width_px = 600   # Pixels
+        max_height_px = 450  # Pixels
+        image_quality = 60   # Qualidade JPEG (60 = boa qualidade, arquivo menor)
+        
+        # Posições iniciais
+        x1 = 50  # Margem esquerda para primeira imagem
+        y_images = 180  # Posição Y para ambas as imagens (um pouco mais alto)
+        spacing = 40  # Espaçamento menor entre as imagens
+
+        # Variáveis para controlar posicionamento
+        x2 = x1
+
+        # PRIMEIRA IMAGEM (otimizada)
+        if os.path.exists(image_path):
+            optimized_path1, img1_width, img1_height = optimize_and_resize_image(
+                image_path, max_width_px, max_height_px, image_quality
+            )
+            temp_files.append(optimized_path1)
+            
+            pdf.image(optimized_path1, x=x1, y=y_images, w=img1_width, h=img1_height)
+            print(f"Primeira imagem otimizada: {img1_width}x{img1_height} pt")
+            
+            # Calcular posição da segunda imagem
+            x2 = x1 + img1_width + spacing
+        else:
+            print(f"Arquivo de imagem não encontrado: {image_path}")
+            x2 = x1 + 450 + spacing  # Valor padrão
+
+        # SEGUNDA IMAGEM (otimizada)
+        if os.path.exists(croqui_path):
+            optimized_path2, img2_width, img2_height = optimize_and_resize_image(
+                croqui_path, max_width_px, max_height_px, image_quality
+            )
+            temp_files.append(optimized_path2)
+            
+            pdf.image(optimized_path2, x=x2, y=y_images, w=img2_width, h=img2_height)
+            print(f"Segunda imagem otimizada: {img2_width}x{img2_height} pt")
+        else:
+            print(f"Arquivo de croqui não encontrado: {croqui_path}")
+
+        # Salvar o PDF
+        pdf.output(pdf_path)
+        
+        # Verificar tamanho do arquivo gerado
+        file_size = get_file_size_mb(pdf_path)
+        print(f"PDF gerado: {file_size} MB")
+        
+        # Alertar se ainda estiver muito grande
+        if file_size > 9.0:
+            print(f"⚠️  ATENÇÃO: PDF ainda está grande ({file_size} MB). Considere reduzir mais a qualidade.")
+            
+    except Exception as e:
+        print(f"Erro ao criar PDF: {e}")
+        raise e
+        
+    finally:
+        # Limpar arquivos temporários
+        for temp_file in temp_files:
+            try:
+                if os.path.exists(temp_file):
+                    os.remove(temp_file)
+            except Exception as e:
+                print(f"Aviso: Não foi possível remover arquivo temporário {temp_file}: {e}")
+
+def create_pdf_extra_compressed(up_data, image_path, croqui_path, pdf_path):
+    """
+    Versão com compressão extra para casos onde o PDF ainda fica muito grande.
+    """
+    temp_files = []
+    
+    try:
+        pdf = FPDF(unit='pt', format=(1920, 1080))
+        pdf.add_page()
+        pdf.set_font("Arial", size=10)  # Fonte ainda menor
+
+        # Texto mais conciso
+        text_line = (
+            f"UP: {up_data['UP']} | Nucleo: {up_data['Nucleo']} | "
+            f"Data: {up_data['Data_Ocorrência']} | Idade: {up_data['Idade']} | "
+            f"Ocorrências: {up_data['Quant.Ocorrências']} | "
+            f"Predominante: {up_data['Ocorrência Predominante']} | "
+            f"Severidade: {up_data['Severidade Predominante']} | "
+            f"Area UP: {up_data['Area UP']} | Area Liquida: {up_data['Area Liquida']} | "
+            f"Incidencia: {up_data['Incidencia']} | "
+            f"Recomendacao: {up_data['Recomendacao']}"
+        )
+
+        pdf.multi_cell(0, 20, text_line)
+
+        # Configurações mais agressivas
+        max_width_px = 400   # Ainda menores
+        max_height_px = 300  
+        image_quality = 45   # Qualidade menor
+        
+        x1, y_images, spacing = 50, 160, 30
+
+        # Primeira imagem
+        if os.path.exists(image_path):
+            optimized_path1, img1_width, img1_height = optimize_and_resize_image(
+                image_path, max_width_px, max_height_px, image_quality
+            )
+            temp_files.append(optimized_path1)
+            pdf.image(optimized_path1, x=x1, y=y_images, w=img1_width, h=img1_height)
+            x2 = x1 + img1_width + spacing
+        else:
+            x2 = x1 + 300 + spacing
+
+        # Segunda imagem
+        if os.path.exists(croqui_path):
+            optimized_path2, img2_width, img2_height = optimize_and_resize_image(
+                croqui_path, max_width_px, max_height_px, image_quality
+            )
+            temp_files.append(optimized_path2)
+            pdf.image(optimized_path2, x=x2, y=y_images, w=img2_width, h=img2_height)
+
+        pdf.output(pdf_path)
+        
+        file_size = get_file_size_mb(pdf_path)
+        print(f"PDF extra-comprimido gerado: {file_size} MB")
+        
+    finally:
+        for temp_file in temp_files:
+            try:
+                if os.path.exists(temp_file):
+                    os.remove(temp_file)
+            except:
+                pass
+
+# =========================================================================
+# 6) PROCESSAMENTO DAS LINHAS (UPs) LENDO O EXCEL
+# =========================================================================
+
+def process_properties(df, ctx, images_folder_url, croquis_folder_url, base_dir, entrega_nome):
+    image_files = list_files(ctx, images_folder_url)
+    croquis_files = list_files(ctx, croquis_folder_url)
+
+    print("=== ARQUIVOS ENCONTRADOS NA PASTA DE IMAGENS ===")
+    for (n, srv_url) in image_files[:5]:
+        print(f" - {n} -> {srv_url}")
+    print("=== ARQUIVOS ENCONTRADOS NA PASTA DE CROQUIS ===")
+    for (n, srv_url) in croquis_files[:5]:
+        print(f" - {n} -> {srv_url}")
+
+    # Contadores para relatório final
+    total_ups = len(df)
+    successful_pdfs = 0
+    failed_ups = 0
+    failed_up_list = []
+    large_files = []  # Para rastrear arquivos que ficaram grandes
+
+    for _, row in df.iterrows():
+        up_code = str(row['UP']).strip()
+
+        nucleo = str(row['Nucleo']).strip()
+        ocorrencia_predominante = str(row['Ocorrência Predominante']).strip()
+
+        # Filtrar imagem e croqui ANTES de criar a pasta
+        possible_image_files = [
+            (n, u)
+            for (n, u) in image_files
+            if n[:6].upper() == up_code.upper()
+        ]
+        possible_croquis_files = [
+            (n, u)
+            for (n, u) in croquis_files
+            if up_code.upper() in n.upper()
+        ]
+
+        if not possible_image_files or not possible_croquis_files:
+            print(f"Arquivos ausentes para UP {up_code}")
+            failed_ups += 1
+            failed_up_list.append(f"{up_code} (arquivos ausentes)")
+            continue
+
+        # Criar pasta apenas quando ambos os arquivos forem encontrados
+        folder_name = f"{entrega_nome} - {nucleo} - {ocorrencia_predominante}"
+        folder_path = os.path.join(base_dir, folder_name)
+        os.makedirs(folder_path, exist_ok=True)
+
+        image_name, image_url = possible_image_files[0]
+        croqui_name, croqui_url = possible_croquis_files[0]
+
+        image_path = os.path.join(folder_path, f"{up_code}_image.jpg")
+        croqui_path = os.path.join(folder_path, f"{up_code}_croqui.jpg")
+
+        try:
+            # Baixar arquivos
+            download_file(ctx, image_url, image_path)
+            download_file(ctx, croqui_url, croqui_path)
+
+            # Criar PDF otimizado
+            pdf_path = os.path.join(folder_path, f"{up_code}.pdf")
+            create_pdf(row, image_path, croqui_path, pdf_path)
+            
+            # Verificar tamanho e aplicar compressão extra se necessário
+            file_size = get_file_size_mb(pdf_path)
+            
+            if file_size > 9.0:
+                print(f"📦 PDF muito grande ({file_size} MB), aplicando compressão extra...")
+                create_pdf_extra_compressed(row, image_path, croqui_path, pdf_path)
+                file_size = get_file_size_mb(pdf_path)
+                
+                if file_size > 9.0:
+                    large_files.append(f"{up_code} ({file_size} MB)")
+                    print(f"⚠️  PDF ainda grande após compressão extra: {file_size} MB")
+                else:
+                    print(f"✅ Compressão extra bem-sucedida: {file_size} MB")
+            
+            print(f"PDF gerado para UP {up_code} - Tamanho: {file_size} MB")
+            successful_pdfs += 1
+
+        except Exception as e:
+            print(f"Erro ao processar UP {up_code}: {e}")
+            failed_ups += 1
+            failed_up_list.append(f"{up_code} (erro: {str(e)[:50]}...)")
+
+    # Relatório final detalhado
+    print("\n" + "="*60)
+    print("RELATÓRIO FINAL DE PROCESSAMENTO")
+    print("="*60)
+    print(f"Total de UPs no arquivo Excel: {total_ups}")
+    print(f"PDFs gerados com sucesso: {successful_pdfs}")
+    print(f"UPs que falharam: {failed_ups}")
+    print(f"Taxa de sucesso: {(successful_pdfs/total_ups)*100:.1f}%")
+    
+    if large_files:
+        print(f"\n📦 ARQUIVOS QUE AINDA FICARAM GRANDES (>9MB):")
+        for large_file in large_files:
+            print(f"  - {large_file}")
+        print("💡 Dica: Estes arquivos podem ter imagens muito grandes ou complexas.")
+    
+    if failed_up_list:
+        print(f"\n❌ UPs QUE FALHARAM:")
+        for failed_up in failed_up_list:
+            print(f"  - {failed_up}")
+    
+    print("="*60)
+    
+    # Estatísticas de otimização
+    if successful_pdfs > 0:
+        success_rate = (successful_pdfs / total_ups) * 100
+        compression_rate = len(large_files) / successful_pdfs * 100 if successful_pdfs > 0 else 0
+        
+        print(f"\n📊 ESTATÍSTICAS DE OTIMIZAÇÃO:")
+        print(f"Taxa de sucesso geral: {success_rate:.1f}%")
+        print(f"Taxa de arquivos <9MB: {(100-compression_rate):.1f}%")
+        print(f"Arquivos que precisaram compressão extra: {len(large_files)}")
+        print("="*60)
+
+# =========================================================================
+# 7) EXECUÇÃO
+# =========================================================================
+
+if __name__ == "__main__":
+    # Configurar Tkinter para a caixa de diálogo de arquivo
+    root = tk.Tk()
+    root.withdraw()  # Ocultar a janela principal do Tkinter
+
+    # Abrir a caixa de diálogo para selecionar o arquivo Excel
+    file_path = filedialog.askopenfilename(
+        title="Selecione o arquivo Excel",
+        filetypes=(("Arquivos Excel", "*.xlsx *.xls"), ("Todos os arquivos", "*.*"))
+    )
+
+    if not file_path:
+        print("Nenhum arquivo selecionado. Encerrando o script.")
+    else:
+        print(f"Arquivo selecionado: {file_path}")
+        
+        # Selecionar pasta de destino
+        base_dir = filedialog.askdirectory(
+            title="Selecione a pasta de destino onde as pastas serão criadas"
+        )
+        
+        if not base_dir:
+            print("Nenhuma pasta de destino selecionada. Encerrando o script.")
+            sys.exit(1)
+        
+        print(f"Pasta de destino selecionada: {base_dir}")
+        
+        entrega_input = input("Digite o nome da Entrega (ex: Entrega 4): ")
+        if not entrega_input:
+            print("Nome da Entrega não fornecido. Usando 'Entrega_Padrao'.")
+            entrega_input = "Entrega_Padrao"
+
+        # Solicitar os caminhos das pastas do SharePoint
+        print("\n=== CONFIGURAÇÃO DOS CAMINHOS DO SHAREPOINT ===")
+        print("DICA: Você pode copiar a URL diretamente do navegador do SharePoint!")
+        print("Exemplo: https://suzano.sharepoint.com/:f:/r/sites/TOPS-VALIDAO/Documentos%20Compartilhados/TOPS/ENTREGA_5/FOTOS?csf=1&web=1&e=...")
+        print("Ou usar o caminho relativo: /sites/TOPS-VALIDAO/Documentos Compartilhados/TOPS/ENTREGA_5/FOTOS")
+        
+        images_folder_input = input("Digite o caminho/URL da pasta de IMAGENS no SharePoint: ").strip()
+        images_folder_url = convert_sharepoint_url_to_path(images_folder_input)
+        
+        croquis_folder_input = input("Digite o caminho/URL da pasta de CROQUIS no SharePoint: ").strip()
+        croquis_folder_url = convert_sharepoint_url_to_path(croquis_folder_input)
+
+        if not images_folder_url or not croquis_folder_url:
+            print("ERRO: Ambos os caminhos devem ser fornecidos.")
+            sys.exit(1)
+
+        print(f"\nCaminhos convertidos:")
+        print(f"Imagens: {images_folder_url}")
+        print(f"Croquis: {croquis_folder_url}")
+
+        # Solicitar a senha
+        print("\nATENÇÃO: A senha não aparecerá na tela enquanto você digita (por segurança).")
+        print("Digite sua senha e pressione Enter:")
+        password_input = getpass.getpass("Digite a senha do SharePoint: ")
+
+        # Tentar ler o arquivo Excel com tratamento de erro
+        try:
+            df = pd.read_excel(file_path, sheet_name="Export")
+        except PermissionError:
+            print(f"\nERRO: Acesso negado ao arquivo Excel.")
+            print(f"Arquivo: {file_path}")
+            print("Possíveis soluções:")
+            print("1. Feche o arquivo Excel se estiver aberto")
+            print("2. Verifique se o arquivo não está sendo usado por outro programa")
+            print("3. Execute este script como administrador")
+            print("4. Verifique as permissões do arquivo")
+            sys.exit(1)
+        except FileNotFoundError:
+            print(f"\nERRO: Arquivo não encontrado: {file_path}")
+            sys.exit(1)
+        except Exception as e:
+            print(f"\nERRO ao ler o arquivo Excel: {e}")
+            sys.exit(1)
+        
+        try:
+            ctx = connect_to_sharepoint(site_url, username, password_input)
+            process_properties(df, ctx, images_folder_url, croquis_folder_url, base_dir, entrega_input)
+        except Exception as err:
+            print(f"Erro geral: {err}")
