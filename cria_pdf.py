@@ -151,7 +151,174 @@ def get_file_size_mb(file_path):
         return 0
 
 # =========================================================================
-# 5) CRIAR O PDF OTIMIZADO COM IMAGENS COMPRIMIDAS
+# 5) CRIAR PLACEHOLDER PARA IMAGEM AUSENTE
+# =========================================================================
+
+def create_image_placeholder(width_pt, height_pt):
+    """
+    Cria um placeholder temporário para imagem ausente
+    """
+    try:
+        # Criar uma imagem placeholder com PIL
+        from PIL import Image, ImageDraw, ImageFont
+        
+        placeholder_img = Image.new('RGB', (int(width_pt * 1.33), int(height_pt * 1.33)), color='lightgray')
+        draw = ImageDraw.Draw(placeholder_img)
+        
+        # Adicionar texto no placeholder
+        try:
+            # Tentar usar uma fonte padrão
+            font = ImageFont.load_default()
+        except:
+            font = None
+            
+        text = "Imagem não encontrada"
+        
+        # Calcular posição do texto para centralizar
+        if font:
+            bbox = draw.textbbox((0, 0), text, font=font)
+            text_width = bbox[2] - bbox[0]
+            text_height = bbox[3] - bbox[1]
+        else:
+            text_width = len(text) * 10  # Estimativa
+            text_height = 20
+            
+        x = (placeholder_img.width - text_width) // 2
+        y = (placeholder_img.height - text_height) // 2
+        
+        draw.text((x, y), text, fill='black', font=font)
+        
+        # Salvar placeholder temporário
+        temp_path = os.path.join(tempfile.gettempdir(), f"placeholder_{os.getpid()}.jpg")
+        placeholder_img.save(temp_path, 'JPEG', quality=85)
+        
+        return temp_path
+        
+    except Exception as e:
+        st.error(f"Erro ao criar placeholder: {e}")
+        return None
+
+# =========================================================================
+# 6) CRIAR O PDF COM SUPORTE A PLACEHOLDERS
+# =========================================================================
+
+def create_pdf_with_placeholders(up_data, image_path, croqui_path, pdf_path):
+    """
+    Cria um PDF otimizado com placeholders para imagens ausentes.
+    """
+    # Lista para armazenar arquivos temporários para limpeza posterior
+    temp_files = []
+    
+    try:
+        # PDF de 1920 pt de largura e 1080 pt de altura (como slide 16:9)
+        pdf = FPDF(unit='pt', format=(1920, 1080))
+        pdf.add_page()
+        pdf.set_font("Arial", size=12)
+
+        # Montar o texto em uma única string, separado por '||'
+        text_line = (
+            f"UP-C-R: {up_data['UP-C-R']} || "
+            f"UP: {up_data['UP']} || "
+            f"Nucleo: {up_data['Nucleo']} || "
+            f"Data_Ocorrência: {up_data['Data_Ocorrência']} || "
+            f"Idade: {up_data['Idade']} || "
+            f"Quant.Ocorrências: {up_data['Quant.Ocorrências']} || "
+            f"Ocorrência Predominante: {up_data['Ocorrência Predominante']} || "
+            f"Severidade Predominante: {up_data['Severidade Predominante']} || "
+            f"Area UP: {up_data['Area UP']} || "
+            f"Area Liquida: {up_data['Area Liquida']} || "
+            f"Incidencia: {up_data['Incidencia']} || "
+            f"Quantidade de Imagens*: {up_data['Quantidade de Imagens*']} || "
+            f"Recomendacao: {up_data['Recomendacao']}"
+        )
+
+        # Usar multi_cell para quebrar linha automaticamente
+        pdf.multi_cell(0, 25, text_line)
+
+        # Configurações para otimização das imagens
+        max_width_px = 600   # Pixels
+        max_height_px = 450  # Pixels
+        image_quality = 60   # Qualidade JPEG
+        
+        # Posições iniciais
+        x1 = 50  # Margem esquerda para primeira imagem
+        y_images = 180  # Posição Y para ambas as imagens
+        spacing = 40  # Espaçamento entre as imagens
+
+        # Variáveis para controlar posicionamento
+        x2 = x1
+
+        # PRIMEIRA IMAGEM (otimizada ou placeholder)
+        if os.path.exists(image_path):
+            optimized_path1, img1_width, img1_height = optimize_and_resize_image(
+                image_path, max_width_px, max_height_px, image_quality
+            )
+            temp_files.append(optimized_path1)
+            
+            pdf.image(optimized_path1, x=x1, y=y_images, w=img1_width, h=img1_height)
+            
+            # Calcular posição da segunda imagem
+            x2 = x1 + img1_width + spacing
+        else:
+            # Criar placeholder para primeira imagem
+            st.warning(f"Imagem não encontrada: {image_path}. Usando placeholder.")
+            placeholder_width = int(max_width_px * 0.75)
+            placeholder_height = int(max_height_px * 0.75)
+            
+            placeholder_path = create_image_placeholder(placeholder_width, placeholder_height)
+            if placeholder_path:
+                temp_files.append(placeholder_path)
+                pdf.image(placeholder_path, x=x1, y=y_images, w=placeholder_width, h=placeholder_height)
+                x2 = x1 + placeholder_width + spacing
+            else:
+                x2 = x1 + placeholder_width + spacing
+
+        # SEGUNDA IMAGEM (otimizada ou placeholder)
+        if os.path.exists(croqui_path):
+            optimized_path2, img2_width, img2_height = optimize_and_resize_image(
+                croqui_path, max_width_px, max_height_px, image_quality
+            )
+            temp_files.append(optimized_path2)
+            
+            pdf.image(optimized_path2, x=x2, y=y_images, w=img2_width, h=img2_height)
+        else:
+            # Criar placeholder para segunda imagem
+            st.warning(f"Croqui não encontrado: {croqui_path}. Usando placeholder.")
+            placeholder_width = int(max_width_px * 0.75)
+            placeholder_height = int(max_height_px * 0.75)
+            
+            placeholder_path = create_image_placeholder(placeholder_width, placeholder_height)
+            if placeholder_path:
+                temp_files.append(placeholder_path)
+                pdf.image(placeholder_path, x=x2, y=y_images, w=placeholder_width, h=placeholder_height)
+
+        # Salvar o PDF
+        pdf.output(pdf_path)
+        
+        # Verificar tamanho do arquivo gerado
+        file_size = get_file_size_mb(pdf_path)
+        
+        # Alertar se ainda estiver muito grande
+        if file_size > 9.0:
+            st.warning(f"PDF ainda está grande ({file_size} MB). Considere usar compressão extra.")
+            
+        return file_size, True
+            
+    except Exception as e:
+        st.error(f"Erro ao criar PDF com placeholders: {e}")
+        return 0, False
+        
+    finally:
+        # Limpar arquivos temporários
+        for temp_file in temp_files:
+            try:
+                if os.path.exists(temp_file):
+                    os.remove(temp_file)
+            except Exception as e:
+                pass
+
+# =========================================================================
+# 7) CRIAR O PDF OTIMIZADO COM IMAGENS COMPRIMIDAS (FUNÇÃO ORIGINAL)
 # =========================================================================
 
 def create_pdf(up_data, image_path, croqui_path, pdf_path):
@@ -392,31 +559,66 @@ def process_properties_streamlit(df, ctx, images_folder_url, croquis_folder_url,
             if up_code.upper() in n.upper()
         ]
 
-        if not possible_image_files or not possible_croquis_files:
-            st.warning(f"Arquivos ausentes para UP {up_code}")
-            failed_ups += 1
-            failed_up_list.append(f"{up_code} (arquivos ausentes)")
-            continue
+        if not possible_image_files and not possible_croquis_files:
+            st.warning(f"Nenhum arquivo encontrado para UP {up_code}. Criando PDF com placeholders.")
+            
+            # Criar pasta mesmo sem arquivos
+            folder_name = f"{entrega_nome} - {nucleo} - {ocorrencia_predominante}"
+            folder_path = os.path.join(output_dir, folder_name)
+            os.makedirs(folder_path, exist_ok=True)
+            
+            # Definir caminhos mesmo que os arquivos não existam
+            image_path = os.path.join(folder_path, f"{up_code}_image.jpg")
+            croqui_path = os.path.join(folder_path, f"{up_code}_croqui.jpg")
+            
+            try:
+                # Criar PDF com placeholders para ambas as imagens
+                pdf_path = os.path.join(folder_path, f"{up_code}.pdf")
+                file_size, success = create_pdf_with_placeholders(row, image_path, croqui_path, pdf_path)
+                
+                if success:
+                    processed_ups += 1
+                    if file_size > 9.0:
+                        large_files += 1
+                    st.success(f"PDF criado com placeholders para UP {up_code} ({file_size} MB)")
+                else:
+                    failed_ups += 1
+                    failed_up_list.append(f"{up_code} (erro ao criar PDF com placeholders)")
+                continue
+                
+            except Exception as e:
+                st.error(f"Erro ao processar UP {up_code} com placeholders: {e}")
+                failed_ups += 1
+                failed_up_list.append(f"{up_code} (erro geral com placeholders)")
+                continue
 
-        # Criar pasta quando ambos os arquivos forem encontrados
+        # Criar pasta quando pelo menos um arquivo for encontrado
         folder_name = f"{entrega_nome} - {nucleo} - {ocorrencia_predominante}"
         folder_path = os.path.join(output_dir, folder_name)
         os.makedirs(folder_path, exist_ok=True)
 
-        image_name, image_url = possible_image_files[0]
-        croqui_name, croqui_url = possible_croquis_files[0]
+        # Definir caminhos e URLs dos arquivos
+        image_name, image_url = possible_image_files[0] if possible_image_files else (None, None)
+        croqui_name, croqui_url = possible_croquis_files[0] if possible_croquis_files else (None, None)
 
         image_path = os.path.join(folder_path, f"{up_code}_image.jpg")
         croqui_path = os.path.join(folder_path, f"{up_code}_croqui.jpg")
 
         try:
-            # Baixar arquivos
-            download_file(ctx, image_url, image_path)
-            download_file(ctx, croqui_url, croqui_path)
+            # Baixar arquivos que existem
+            if possible_image_files:
+                download_file(ctx, image_url, image_path)
+            else:
+                st.warning(f"Imagem não encontrada para UP {up_code}. Será usado placeholder.")
+                
+            if possible_croquis_files:
+                download_file(ctx, croqui_url, croqui_path)
+            else:
+                st.warning(f"Croqui não encontrado para UP {up_code}. Será usado placeholder.")
 
-            # Criar PDF otimizado
+            # Criar PDF otimizado com suporte a placeholders
             pdf_path = os.path.join(folder_path, f"{up_code}.pdf")
-            file_size, success = create_pdf(row, image_path, croqui_path, pdf_path)
+            file_size, success = create_pdf_with_placeholders(row, image_path, croqui_path, pdf_path)
             
             if not success:
                 failed_ups += 1
