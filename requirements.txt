@@ -1,0 +1,22 @@
+# Sistema RPA Fênix - Dependências
+
+# Interface web
+streamlit>=1.28.0
+
+# Manipulação de dados
+pandas>=2.0.0
+openpyxl>=3.1.0
+
+# Automação web
+playwright>=1.40.0
+nest_asyncio>=1.5.0
+
+# Criação de PDFs
+fpdf2>=2.7.0
+Pillow>=10.0.0
+
+# Integração SharePoint (para módulo PDF)
+Office365-REST-Python-Client>=2.4.0
+
+# Utilitários
+python-dotenv>=1.0.0

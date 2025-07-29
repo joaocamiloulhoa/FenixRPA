@@ -4,7 +4,7 @@ import time
 import traceback
 from datetime import datetime
 from cria_pdf import criar_pdf_streamlit
-from lancamento_fenix import executar_lancamento_fenix, get_recomendacao, atualizar_status_planilha, fechar_navegador_manual
+from lancamento_fenix import executar_lancamento_fenix, get_recomendacao, atualizar_status_planilha
 
 # Mantendo apenas as funções auxiliares de texto que são usadas pela interface
 
@@ -50,26 +50,6 @@ def get_consideracoes_text():
 
 def lancamento_fenix():
     st.header("Lançamento de Informações no Fênix")
-    
-    # Verificar se há opção de continuar lançamento
-    if hasattr(st.session_state, 'mostrar_continuar_lancamento') and st.session_state.mostrar_continuar_lancamento:
-        st.success("🎉 Núcleo anterior processado com sucesso!")
-        st.info("🔄 Navegador mantido aberto para continuar com outros núcleos")
-        
-        col1, col2 = st.columns(2)
-        with col1:
-            if st.button("➕ Continuar com Outro Núcleo", key="continuar_lancamento", type="primary", use_container_width=True):
-                st.session_state.mostrar_continuar_lancamento = False
-                st.rerun()
-        
-        with col2:
-            if st.button("🔚 Finalizar e Fechar Navegador", key="finalizar_lancamento", use_container_width=True):
-                if fechar_navegador_manual():
-                    st.success("✅ Navegador fechado com sucesso!")
-                    time.sleep(2)
-                    st.rerun()
-        
-        st.markdown("---")
     
     # Upload do arquivo Excel
     uploaded_file = st.file_uploader("Escolha um arquivo Excel", type=['xlsx', 'xls'], key="lancamento_excel_uploader")
@@ -149,11 +129,6 @@ def lancamento_fenix():
                 
                 # Botão Play para iniciar
                 if st.button("▶️ INICIAR LANÇAMENTO", key="play_button", type="primary", use_container_width=True):
-                    # Verificar se é continuação de sessão
-                    is_continuation = hasattr(st.session_state, 'browser_ativo') and st.session_state.browser_ativo
-                    if is_continuation:
-                        st.info("🔄 Continuando com navegador aberto...")
-                    
                     processar_lancamento(ups_para_processar, st.session_state.nucleos_selecionados, df)
                     
         except Exception as e:
@@ -172,13 +147,7 @@ def processar_lancamento(df_ups, nucleos_selecionados, df_original):
         
         if resultado:
             st.balloons()  # Animação de comemoração
-            
-            # Verificar se deve mostrar opção de continuar
-            if hasattr(st.session_state, 'mostrar_continuar_lancamento') and st.session_state.mostrar_continuar_lancamento:
-                st.success("🎉 Núcleo processado com sucesso!")
-                st.info("🚀 Pronto para processar outro núcleo - use os botões acima!")
-            else:
-                st.success("🎉 Processamento de todos os núcleos concluído!")
+            st.success("🎉 Processamento de todos os núcleos concluído!")
             
         # NOVA FUNCIONALIDADE: Mostrar opção de atualização se houver UPs processadas com sucesso
         if hasattr(st.session_state, 'mostrar_opcao_excel') and st.session_state.mostrar_opcao_excel:
@@ -249,12 +218,6 @@ def main():
     if 'mostrar_opcao_excel' not in st.session_state:
         st.session_state.mostrar_opcao_excel = False
     
-    if 'mostrar_continuar_lancamento' not in st.session_state:
-        st.session_state.mostrar_continuar_lancamento = False
-    
-    if 'browser_ativo' not in st.session_state:
-        st.session_state.browser_ativo = False
-    
     # Criando o menu lateral
     st.sidebar.title("Menu de Opções")
     opcao = st.sidebar.radio(
@@ -262,15 +225,6 @@ def main():
         ["Lançamento no Fênix", "Criar PDF com Imagens e Croquis"],
         key="menu_principal"
     )
-    
-    # Mostrar status do navegador na sidebar se estiver ativo
-    if st.session_state.browser_ativo:
-        st.sidebar.success("🌐 Navegador Ativo")
-        if st.sidebar.button("🔚 Fechar Navegador", key="sidebar_fechar"):
-            if fechar_navegador_manual():
-                st.success("✅ Navegador fechado!")
-                time.sleep(1)
-                st.rerun()
     
     # Navegação baseada na escolha do usuário
     if opcao == "Lançamento no Fênix":

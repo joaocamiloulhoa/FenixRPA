@@ -1,10 +1,9 @@
 import streamlit as st
 import pandas as pd
 import time
-import traceback
 from datetime import datetime
 from cria_pdf import criar_pdf_streamlit
-from lancamento_fenix import executar_lancamento_fenix, get_recomendacao, atualizar_status_planilha, fechar_navegador_manual
+from lancamento_fenix import executar_lancamento_fenix, get_recomendacao, atualizar_status_planilha
 
 # Mantendo apenas as funções auxiliares de texto que são usadas pela interface
 
@@ -50,26 +49,6 @@ def get_consideracoes_text():
 
 def lancamento_fenix():
     st.header("Lançamento de Informações no Fênix")
-    
-    # Verificar se há opção de continuar lançamento
-    if hasattr(st.session_state, 'mostrar_continuar_lancamento') and st.session_state.mostrar_continuar_lancamento:
-        st.success("🎉 Núcleo anterior processado com sucesso!")
-        st.info("🔄 Navegador mantido aberto para continuar com outros núcleos")
-        
-        col1, col2 = st.columns(2)
-        with col1:
-            if st.button("➕ Continuar com Outro Núcleo", key="continuar_lancamento", type="primary", use_container_width=True):
-                st.session_state.mostrar_continuar_lancamento = False
-                st.rerun()
-        
-        with col2:
-            if st.button("🔚 Finalizar e Fechar Navegador", key="finalizar_lancamento", use_container_width=True):
-                if fechar_navegador_manual():
-                    st.success("✅ Navegador fechado com sucesso!")
-                    time.sleep(2)
-                    st.rerun()
-        
-        st.markdown("---")
     
     # Upload do arquivo Excel
     uploaded_file = st.file_uploader("Escolha um arquivo Excel", type=['xlsx', 'xls'], key="lancamento_excel_uploader")
@@ -149,11 +128,6 @@ def lancamento_fenix():
                 
                 # Botão Play para iniciar
                 if st.button("▶️ INICIAR LANÇAMENTO", key="play_button", type="primary", use_container_width=True):
-                    # Verificar se é continuação de sessão
-                    is_continuation = hasattr(st.session_state, 'browser_ativo') and st.session_state.browser_ativo
-                    if is_continuation:
-                        st.info("🔄 Continuando com navegador aberto...")
-                    
                     processar_lancamento(ups_para_processar, st.session_state.nucleos_selecionados, df)
                     
         except Exception as e:
@@ -172,67 +146,29 @@ def processar_lancamento(df_ups, nucleos_selecionados, df_original):
         
         if resultado:
             st.balloons()  # Animação de comemoração
+            st.success("🎉 Processamento de todos os núcleos concluído!")
             
-            # Verificar se deve mostrar opção de continuar
-            if hasattr(st.session_state, 'mostrar_continuar_lancamento') and st.session_state.mostrar_continuar_lancamento:
-                st.success("🎉 Núcleo processado com sucesso!")
-                st.info("🚀 Pronto para processar outro núcleo - use os botões acima!")
-            else:
-                st.success("🎉 Processamento de todos os núcleos concluído!")
+            # NOVA FUNCIONALIDADE: Perguntar sobre atualização da planilha
+            st.subheader("📝 Atualização da Planilha")
+            st.info("Deseja atualizar o status das UPs processadas com sucesso na planilha?")
             
-        # NOVA FUNCIONALIDADE: Mostrar opção de atualização se houver UPs processadas com sucesso
-        if hasattr(st.session_state, 'mostrar_opcao_excel') and st.session_state.mostrar_opcao_excel:
-            ups_processadas = getattr(st.session_state, 'ups_processadas_com_sucesso', [])
-            if ups_processadas:
-                st.markdown("---")
-                st.subheader("📝 Atualização da Planilha")
-                st.info(f"✅ {len(ups_processadas)} UP(s) processada(s) com sucesso: {', '.join(ups_processadas)}")
-                st.info("Deseja atualizar o status dessas UPs de 'NÃO' para 'SIM' na coluna 'Laudo Existente'?")
-                
-                # Debug: Mostrar informações sobre o DataFrame original
-                if hasattr(st.session_state, 'df_original'):
-                    df_info = st.session_state.df_original
-                    total_nao = len(df_info[df_info['Laudo Existente'].str.upper() == 'NÃO'])
-                    total_sim = len(df_info[df_info['Laudo Existente'].str.upper() == 'SIM'])
-                    st.info(f"📊 Status atual da planilha: {total_nao} com 'NÃO', {total_sim} com 'SIM'")
-                
-                col1, col2 = st.columns(2)
-                with col1:
-                    if st.button("✅ SIM - Atualizar Status", key="atualizar_sim", type="primary"):
-                        st.info("🔄 Iniciando atualização da planilha...")
+            col1, col2 = st.columns(2)
+            with col1:
+                if st.button("✅ SIM - Atualizar Status", key="atualizar_sim", type="primary"):
+                    # Obter UPs processadas com sucesso (será passado pelo resultado da automação)
+                    ups_processadas = getattr(st.session_state, 'ups_processadas_com_sucesso', [])
+                    if ups_processadas:
+                        if atualizar_status_planilha(st.session_state.df_original, ups_processadas):
+                            st.success("📊 Planilha atualizada com sucesso!")
+                        else:
+                            st.error("❌ Erro ao atualizar a planilha.")
+                    else:
+                        st.warning("⚠️ Nenhuma UP foi processada com sucesso.")
                         
-                        # Debug adicional: verificar dados no session_state
-                        st.info(f"🔍 DataFrame original shape: {st.session_state.df_original.shape}")
-                        st.info(f"🔍 UPs a serem atualizadas: {ups_processadas}")
-                        st.info(f"🔍 Tipo das UPs: {[type(up) for up in ups_processadas]}")
-                        
-                        try:
-                            resultado_atualizacao = atualizar_status_planilha(st.session_state.df_original, ups_processadas)
-                            
-                            if resultado_atualizacao:
-                                st.success("📊 Planilha atualizada com sucesso!")
-                                st.success("🎉 Todas as UPs processadas com sucesso tiveram seu status atualizado para 'SIM'!")
-                                st.info("📥 Use o botão de download acima para baixar a planilha atualizada.")
-                                
-                                # Reset da opção após uso
-                                st.session_state.mostrar_opcao_excel = False
-                                st.rerun()  # Forçar atualização da interface
-                            else:
-                                st.error("❌ Erro ao atualizar a planilha ou nenhuma UP foi encontrada.")
-                                st.error("🔍 Verifique os logs de debug acima para entender o problema.")
-                        except Exception as update_error:
-                            st.error(f"❌ Erro durante atualização: {str(update_error)}")
-                            import traceback
-                            st.error(f"❌ Stack trace completo: {traceback.format_exc()}")
-                            
-                with col2:
-                    if st.button("❌ NÃO - Manter Original", key="atualizar_nao"):
-                        st.info("✋ Planilha mantida sem alterações.")
-                        # Reset da opção após uso
-                        st.session_state.mostrar_opcao_excel = False
-                        st.rerun()  # Forçar atualização da interface
-                        
-        if not resultado:
+            with col2:
+                if st.button("❌ NÃO - Manter Original", key="atualizar_nao"):
+                    st.info("✋ Planilha mantida sem alterações.")
+        else:
             st.error("❌ Houve erros durante o processamento. Verifique os logs acima.")
         
     except Exception as e:
@@ -245,16 +181,6 @@ def criar_pdf():
 def main():
     st.title("Sistema de Automação RPA")
     
-    # Inicializar flags do session_state
-    if 'mostrar_opcao_excel' not in st.session_state:
-        st.session_state.mostrar_opcao_excel = False
-    
-    if 'mostrar_continuar_lancamento' not in st.session_state:
-        st.session_state.mostrar_continuar_lancamento = False
-    
-    if 'browser_ativo' not in st.session_state:
-        st.session_state.browser_ativo = False
-    
     # Criando o menu lateral
     st.sidebar.title("Menu de Opções")
     opcao = st.sidebar.radio(
@@ -262,15 +188,6 @@ def main():
         ["Lançamento no Fênix", "Criar PDF com Imagens e Croquis"],
         key="menu_principal"
     )
-    
-    # Mostrar status do navegador na sidebar se estiver ativo
-    if st.session_state.browser_ativo:
-        st.sidebar.success("🌐 Navegador Ativo")
-        if st.sidebar.button("🔚 Fechar Navegador", key="sidebar_fechar"):
-            if fechar_navegador_manual():
-                st.success("✅ Navegador fechado!")
-                time.sleep(1)
-                st.rerun()
     
     # Navegação baseada na escolha do usuário
     if opcao == "Lançamento no Fênix":
