@@ -5,6 +5,8 @@ from urllib.parse import quote
 import pandas as pd
 import tempfile
 import getpass
+import tkinter as tk
+from tkinter import filedialog
 
 # Importando bibliotecas necessárias
 from office365.runtime.auth.authentication_context import AuthenticationContext
@@ -18,6 +20,35 @@ from PIL import Image
 # =========================================================================
 
 site_url = "https://suzano.sharepoint.com/sites/TOPS-VALIDAO"
+
+# =========================================================================
+# FUNÇÃO PARA SELEÇÃO DE PASTA
+# =========================================================================
+
+def selecionar_pasta(titulo="Selecione uma pasta"):
+    """
+    Abre uma janela para seleção de pasta usando tkinter
+    """
+    try:
+        # Criar uma janela root temporária (oculta)
+        root = tk.Tk()
+        root.withdraw()
+        root.wm_attributes('-topmost', 1)
+        
+        # Abrir o seletor de pasta
+        pasta_selecionada = filedialog.askdirectory(
+            title=titulo,
+            mustexist=True
+        )
+        
+        # Fechar a janela root
+        root.destroy()
+        
+        return pasta_selecionada if pasta_selecionada else None
+        
+    except Exception as e:
+        st.error(f"❌ Erro ao abrir seletor de pasta: {e}")
+        return None
 default_username = "joaoco@suzano.com.br"
 
 # =========================================================================
@@ -67,7 +98,7 @@ def connect_to_sharepoint(site_url, username, password):
         raise Exception("Erro ao autenticar. Verifique suas credenciais.")
 
 # =========================================================================
-# 2) LISTAR ARQUIVOS (SEM SUBPASTAS)
+# 2) LISTAR ARQUIVOS (SEM SUBPASTAS) - SHAREPOINT
 # =========================================================================
 
 def list_files(ctx, folder_url):
@@ -78,6 +109,39 @@ def list_files(ctx, folder_url):
     return [(f.properties["Name"], f.properties["ServerRelativeUrl"]) for f in files]
 
 # =========================================================================
+# 2B) LISTAR ARQUIVOS LOCAIS
+# =========================================================================
+
+def list_files_local(folder_path):
+    """
+    Lista arquivos de uma pasta local
+    Retorna lista de tuplas (nome_arquivo, caminho_completo)
+    """
+    try:
+        if not os.path.exists(folder_path):
+            st.error(f"❌ Pasta não encontrada: {folder_path}")
+            return []
+        
+        files = []
+        # Extensões de imagem suportadas
+        valid_extensions = {'.jpg', '.jpeg', '.png', '.bmp', '.gif', '.tiff', '.webp'}
+        
+        for filename in os.listdir(folder_path):
+            file_path = os.path.join(folder_path, filename)
+            
+            # Verificar se é arquivo (não pasta)
+            if os.path.isfile(file_path):
+                # Verificar extensão
+                _, ext = os.path.splitext(filename.lower())
+                if ext in valid_extensions:
+                    files.append((filename, file_path))
+        
+        return files
+    except Exception as e:
+        st.error(f"❌ Erro ao listar arquivos da pasta {folder_path}: {e}")
+        return []
+
+# =========================================================================
 # 3) BAIXAR ARQUIVO DO SHAREPOINT
 # =========================================================================
 
@@ -85,6 +149,22 @@ def download_file(ctx, server_relative_file_url, local_path):
     response = File.open_binary(ctx, server_relative_file_url)
     with open(local_path, "wb") as local_file:
         local_file.write(response.content)
+
+# =========================================================================
+# 3B) COPIAR ARQUIVO LOCAL
+# =========================================================================
+
+def copy_local_file(source_path, destination_path):
+    """
+    Copia um arquivo local para outro local
+    """
+    try:
+        import shutil
+        shutil.copy2(source_path, destination_path)
+        return True
+    except Exception as e:
+        st.error(f"❌ Erro ao copiar arquivo {source_path}: {e}")
+        return False
 
 # =========================================================================
 # 4) FUNÇÃO PARA OTIMIZAR E REDIMENSIONAR IMAGEM
@@ -689,22 +769,231 @@ def process_properties_streamlit(df, ctx, images_folder_url, croquis_folder_url,
                     st.error("Não foi possível abrir o diretório automaticamente.")
 
 # =========================================================================
+# 7) PROCESSAMENTO COM ARQUIVOS LOCAIS
+# =========================================================================
+
+def process_properties_local(df, images_folder_path, croquis_folder_path, output_dir, entrega_nome):
+    """
+    Processa as UPs usando arquivos locais ao invés do SharePoint
+    """
+    # Preparar diretório de saída
+    os.makedirs(output_dir, exist_ok=True)
+    
+    # Criar um container de progresso
+    progress_container = st.empty()
+    status_container = st.empty()
+    
+    with st.spinner("📁 Obtendo lista de arquivos das pastas locais..."):
+        # Obter lista de arquivos das pastas locais
+        try:
+            image_files = list_files_local(images_folder_path)
+            croquis_files = list_files_local(croquis_folder_path)
+        except Exception as e:
+            st.error(f"❌ Erro ao listar arquivos das pastas: {str(e)}")
+            return
+    
+    # Exibir informações sobre arquivos encontrados
+    st.write("### 📁 Arquivos encontrados nas pastas locais")
+    col1, col2 = st.columns(2)
+    with col1:
+        st.write(f"📷 **Imagens:** {len(image_files)}")
+        if len(image_files) > 0:
+            st.write("Exemplos de imagens:")
+            for (n, _) in image_files[:3]:
+                st.write(f"- {n}")
+        else:
+            st.warning(f"⚠️ Nenhuma imagem encontrada em: {images_folder_path}")
+    
+    with col2:
+        st.write(f"🗺️ **Croquis:** {len(croquis_files)}")
+        if len(croquis_files) > 0:
+            st.write("Exemplos de croquis:")
+            for (n, _) in croquis_files[:3]:
+                st.write(f"- {n}")
+        else:
+            st.warning(f"⚠️ Nenhum croqui encontrado em: {croquis_folder_path}")
+    
+    # Contadores para relatório final
+    total_ups = len(df)
+    successful_pdfs = 0
+    failed_ups = 0
+    failed_up_list = []
+    large_files = []  # Para rastrear arquivos que ficaram grandes
+    
+    # Criar barra de progresso
+    progress_bar = st.progress(0)
+    
+    # Para cada linha no DataFrame
+    for index, row in df.iterrows():
+        try:
+            # Obter código da UP
+            up_code = str(row.get('UP', f'UP_{index+1}')).strip()
+            
+            # Atualizar status
+            status_container.text(f"🔄 Processando UP {up_code}... ({index+1}/{total_ups})")
+            
+            # Obter dados para o PDF
+            nucleo = str(row.get('Nucleo', 'N/A'))
+            ocorrencia_predominante = str(row.get('Ocorrência Predominante', 'N/A'))
+            
+            # Filtrar imagem e croqui pelo código da UP
+            possible_image_files = [
+                (n, path)
+                for (n, path) in image_files
+                if n[:6].upper() == up_code.upper()
+            ]
+            possible_croquis_files = [
+                (n, path)
+                for (n, path) in croquis_files
+                if up_code.upper() in n.upper()
+            ]
+
+            # Se não encontrar arquivos, usar placeholders (não falhar)
+            if not possible_image_files and not possible_croquis_files:
+                st.warning(f"⚠️ Nenhum arquivo encontrado para UP {up_code}. Usando placeholders.")
+            
+            # Criar pasta quando pelo menos uma UP for processada
+            folder_name = f"{entrega_nome} - {nucleo} - {ocorrencia_predominante}"
+            folder_path = os.path.join(output_dir, folder_name)
+            os.makedirs(folder_path, exist_ok=True)
+
+            # Definir caminhos dos arquivos de trabalho
+            image_path = os.path.join(folder_path, f"{up_code}_image.jpg")
+            croqui_path = os.path.join(folder_path, f"{up_code}_croqui.jpg")
+
+            # Copiar arquivos se existirem
+            if possible_image_files:
+                image_name, source_image_path = possible_image_files[0]
+                copy_local_file(source_image_path, image_path)
+                st.info(f"📷 Imagem copiada: {image_name}")
+            else:
+                st.warning(f"⚠️ Imagem não encontrada para UP {up_code}. Será usado placeholder.")
+
+            if possible_croquis_files:
+                croqui_name, source_croqui_path = possible_croquis_files[0]
+                copy_local_file(source_croqui_path, croqui_path)
+                st.info(f"🗺️ Croqui copiado: {croqui_name}")
+            else:
+                st.warning(f"⚠️ Croqui não encontrado para UP {up_code}. Será usado placeholder.")
+
+            # Criar dados para o PDF
+            up_data = {
+                'UP-C-R': str(row.get('UP-C-R', up_code)),
+                'UP': up_code,
+                'Nucleo': nucleo,
+                'Data_Ocorrência': str(row.get('Data_Ocorrência', 'N/A')),
+                'Idade': str(row.get('Idade', 'N/A')),
+                'Quant.Ocorrências': str(row.get('Quant.Ocorrências', 'N/A')),
+                'Ocorrência Predominante': ocorrencia_predominante,
+                'Severidade Predominante': str(row.get('Severidade Predominante', 'N/A')),
+                'Area UP': str(row.get('Area UP', 'N/A')),
+                'Area Liquida': str(row.get('Area Liquida', 'N/A')),
+                'Incidencia': str(row.get('Incidencia', 'N/A')),
+                'Quantidade de Imagens*': str(row.get('Quantidade de Imagens*', 'N/A')),
+                'Recomendacao': str(row.get('Recomendacao', 'N/A'))
+            }
+
+            # Criar PDF usando a função existente com placeholders
+            pdf_path = os.path.join(folder_path, f"{up_code}.pdf")
+            file_size, success = create_pdf_with_placeholders(up_data, image_path, croqui_path, pdf_path)
+            
+            if success:
+                successful_pdfs += 1
+                if file_size > 9.0:
+                    large_files.append(f"{up_code} ({file_size} MB)")
+                    st.warning(f"⚠️ PDF grande: {file_size} MB")
+                else:
+                    st.success(f"✅ PDF criado: {up_code} ({file_size} MB)")
+            else:
+                failed_ups += 1
+                failed_up_list.append(f"{up_code} (erro ao criar PDF)")
+
+        except Exception as e:
+            st.error(f"❌ Erro ao processar UP {up_code}: {str(e)}")
+            failed_ups += 1
+            failed_up_list.append(f"{up_code} (erro: {str(e)[:50]}...)")
+        
+        # Atualizar progresso
+        progress_bar.progress((index + 1) / total_ups)
+    
+    # Limpar contêineres de progresso
+    progress_container.empty()
+    status_container.empty()
+    
+    # Relatório final
+    st.success("🎉 Processamento concluído!")
+    st.write("## 📊 Relatório Final")
+    st.write(f"📈 Total de UPs no arquivo Excel: {total_ups}")
+    st.write(f"✅ PDFs gerados com sucesso: {successful_pdfs}")
+    st.write(f"❌ UPs que falharam: {failed_ups}")
+    
+    if successful_pdfs > 0:
+        st.write(f"🎯 Taxa de sucesso: {(successful_pdfs/total_ups)*100:.1f}%")
+    
+    if large_files:
+        st.warning("### ⚠️ Arquivos que ainda ficaram grandes (>9MB):")
+        for large_file in large_files:
+            st.write(f"- {large_file}")
+        st.info("💡 Dica: Estes arquivos podem ter imagens muito grandes ou complexas.")
+    
+    if failed_up_list:
+        st.error("### ❌ UPs que falharam:")
+        for failed_up in failed_up_list:
+            st.write(f"- {failed_up}")
+    
+    # Link para o diretório com os PDFs gerados
+    st.success(f"📁 Os PDFs foram salvos em: {output_dir}")
+    
+    # Botão para abrir o diretório dos PDFs
+    if st.button("📂 Abrir diretório com os PDFs"):
+        import subprocess
+        try:
+            os.startfile(output_dir)  # Windows
+        except:
+            try:
+                subprocess.Popen(['xdg-open', output_dir])  # Linux
+            except:
+                try:
+                    subprocess.Popen(['open', output_dir])  # macOS
+                except:
+                    st.error("❌ Não foi possível abrir o diretório automaticamente.")
+
+# =========================================================================
 # INTERFACE STREAMLIT
 # =========================================================================
 
 def criar_pdf_streamlit():
-    st.title("Criação de PDFs com Imagens e Croquis")
+    st.title("🚀 Sistema FenixRPA - Automação Completa")
+    
+    # Menu lateral para escolher entre PDF e Lançamento Fenix
+    st.sidebar.title("🎯 Menu Principal")
+    operacao_principal = st.sidebar.radio(
+        "Selecione a operação desejada:",
+        ["📄 Criar PDFs", "🌐 Lançar no Fênix"],
+        key="operacao_principal"
+    )
+    
+    if operacao_principal == "🌐 Lançar no Fênix":
+        # Importar e executar a funcionalidade de lançamento no Fenix
+        try:
+            from app import lancamento_fenix
+            lancamento_fenix()
+            return
+        except ImportError:
+            st.error("❌ Módulo de lançamento no Fênix não encontrado. Verifique se o arquivo 'app.py' está disponível.")
+            st.info("💡 Usando apenas a funcionalidade de criação de PDFs.")
+    
+    # Continuar com a criação de PDFs
+    st.header("📄 Criação de PDFs com Imagens e Croquis")
     
     st.markdown("""
     ### 📊 Ferramenta de Geração de PDFs para UPs
     
-    Esta ferramenta permite criar PDFs combinando dados do Excel com imagens e croquis do SharePoint.
+    Esta ferramenta permite criar PDFs combinando dados do Excel com imagens e croquis.
     
-    **Instruções:**
-    1. Faça upload do arquivo Excel contendo os dados das UPs
-    2. Forneça as informações de acesso ao SharePoint
-    3. Configure as pastas e o nome da entrega
-    4. Clique em "Iniciar Processamento"
+    **Modos disponíveis:**
+    - 🌐 **SharePoint:** Baixa imagens direto do SharePoint
+    - 📁 **Pastas Locais:** Usa imagens já baixadas em pastas do computador
     """)
     
     # Upload do arquivo Excel
@@ -721,64 +1010,206 @@ def criar_pdf_streamlit():
             st.write("Preview dos dados:")
             st.dataframe(df.head())
             
-            # Configuração do SharePoint
-            st.header("2. Configuração do SharePoint")
+            # Seleção do modo de operação
+            st.header("2. 🎯 Modo de Operação")
             
-            username = st.text_input("E-mail do SharePoint:", value=default_username)
-            password = st.text_input("Senha do SharePoint:", type="password")
+            modo_operacao = st.radio(
+                "Escolha de onde vêm as imagens e croquis:",
+                [
+                    "📁 Pastas Locais (Recomendado - Mais Rápido)",
+                    "🌐 SharePoint Online (Método Original)"
+                ],
+                help="Pastas Locais: Use se já baixou as imagens para o computador. SharePoint: Baixa automaticamente do site."
+            )
             
-            # Configuração dos caminhos
-            st.header("3. Configuração de Pastas e Entrega")
-            
-            entrega_nome = st.text_input("Nome da Entrega (ex: Entrega 4):", value="Entrega")
-            
-            st.markdown("""
-            **Dica para URL do SharePoint:**
-            Você pode copiar a URL diretamente do navegador, por exemplo:
-            `https://suzano.sharepoint.com/:f:/r/sites/TOPS-VALIDAO/Documentos%20Compartilhados/TOPS/ENTREGA_5/FOTOS`
-            
-            Ou usar o caminho relativo:
-            `/sites/TOPS-VALIDAO/Documentos Compartilhados/TOPS/ENTREGA_5/FOTOS`
-            """)
-            
-            images_folder_input = st.text_input("URL/Caminho da pasta de IMAGENS no SharePoint:")
-            croquis_folder_input = st.text_input("URL/Caminho da pasta de CROQUIS no SharePoint:")
-            
-            # Converter caminhos do SharePoint
-            if images_folder_input and croquis_folder_input:
-                images_folder_url = convert_sharepoint_url_to_path(images_folder_input)
-                croquis_folder_url = convert_sharepoint_url_to_path(croquis_folder_input)
+            if modo_operacao.startswith("🌐 SharePoint"):
+                # Configuração do SharePoint
+                st.header("3. 🔐 Configuração do SharePoint")
                 
-                st.write("Caminhos convertidos:")
-                st.code(f"Imagens: {images_folder_url}")
-                st.code(f"Croquis: {croquis_folder_url}")
+                username = st.text_input("E-mail do SharePoint:", value=default_username)
+                password = st.text_input("Senha do SharePoint:", type="password")
+                
+                # Configuração dos caminhos SharePoint
+                st.header("4. 🌐 Configuração de Pastas SharePoint")
+                
+                st.markdown("""
+                **Dica para URL do SharePoint:**
+                Você pode copiar a URL diretamente do navegador, por exemplo:
+                `https://suzano.sharepoint.com/:f:/r/sites/TOPS-VALIDAO/Documentos%20Compartilhados/TOPS/ENTREGA_5/FOTOS`
+                
+                Ou usar o caminho relativo:
+                `/sites/TOPS-VALIDAO/Documentos Compartilhados/TOPS/ENTREGA_5/FOTOS`
+                """)
+                
+                images_folder_input = st.text_input("URL/Caminho da pasta de IMAGENS no SharePoint:")
+                croquis_folder_input = st.text_input("URL/Caminho da pasta de CROQUIS no SharePoint:")
+                
+                # Converter caminhos do SharePoint
+                if images_folder_input and croquis_folder_input:
+                    images_folder_url = convert_sharepoint_url_to_path(images_folder_input)
+                    croquis_folder_url = convert_sharepoint_url_to_path(croquis_folder_input)
+                    
+                    st.write("Caminhos convertidos:")
+                    st.code(f"Imagens: {images_folder_url}")
+                    st.code(f"Croquis: {croquis_folder_url}")
+                    
+            else:
+                # Configuração de Pastas Locais
+                st.header("3. 📁 Configuração de Pastas Locais")
+                
+                st.markdown("""
+                **Instruções:**
+                1. Baixe todas as imagens do SharePoint para uma pasta no seu computador
+                2. Baixe todos os croquis para outra pasta no seu computador
+                3. Selecione as pastas usando os botões abaixo
+                
+                **Dica:** As imagens devem ter nomes que comecem com o código da UP (ex: 123456_foto.jpg)
+                """)
+                
+                # Inicializar as variáveis de session_state se não existirem
+                if 'images_folder_path' not in st.session_state:
+                    st.session_state.images_folder_path = r"C:\Users\joaoc\Documents\Imagens_UPs"
+                
+                if 'croquis_folder_path' not in st.session_state:
+                    st.session_state.croquis_folder_path = r"C:\Users\joaoc\Documents\Croquis_UPs"
+                
+                # Seção para pasta de imagens
+                st.subheader("📷 Pasta das Imagens")
+                col1, col2 = st.columns([3, 1])
+                
+                with col1:
+                    st.text_input(
+                        "Pasta atual das IMAGENS:",
+                        value=st.session_state.images_folder_path,
+                        disabled=True,
+                        key="display_images_path"
+                    )
+                
+                with col2:
+                    if st.button("📂 Selecionar Pasta", key="btn_select_images", use_container_width=True):
+                        nova_pasta = selecionar_pasta("Selecione a pasta das IMAGENS")
+                        if nova_pasta:
+                            st.session_state.images_folder_path = nova_pasta
+                            st.rerun()
+                
+                # Seção para pasta de croquis
+                st.subheader("🗺️ Pasta dos Croquis")
+                col1, col2 = st.columns([3, 1])
+                
+                with col1:
+                    st.text_input(
+                        "Pasta atual dos CROQUIS:",
+                        value=st.session_state.croquis_folder_path,
+                        disabled=True,
+                        key="display_croquis_path"
+                    )
+                
+                with col2:
+                    if st.button("📂 Selecionar Pasta", key="btn_select_croquis", use_container_width=True):
+                        nova_pasta = selecionar_pasta("Selecione a pasta dos CROQUIS")
+                        if nova_pasta:
+                            st.session_state.croquis_folder_path = nova_pasta
+                            st.rerun()
+                
+                # Usar as variáveis do session_state
+                images_folder_path = st.session_state.images_folder_path
+                croquis_folder_path = st.session_state.croquis_folder_path
+                
+                # Verificar se as pastas existem
+                col1, col2 = st.columns(2)
+                with col1:
+                    if images_folder_path:
+                        if os.path.exists(images_folder_path):
+                            num_images = len([f for f in os.listdir(images_folder_path) 
+                                            if os.path.isfile(os.path.join(images_folder_path, f))])
+                            st.success(f"✅ Pasta encontrada: {num_images} arquivos")
+                        else:
+                            st.error("❌ Pasta não encontrada")
+                
+                with col2:
+                    if croquis_folder_path:
+                        if os.path.exists(croquis_folder_path):
+                            num_croquis = len([f for f in os.listdir(croquis_folder_path) 
+                                             if os.path.isfile(os.path.join(croquis_folder_path, f))])
+                            st.success(f"✅ Pasta encontrada: {num_croquis} arquivos")
+                        else:
+                            st.error("❌ Pasta não encontrada")
+            
+            # Configuração da Entrega (comum para ambos os modos)
+            entrega_nome = st.text_input("📦 Nome da Entrega (ex: Entrega 4):", value="Entrega")
             
             # Seleção da pasta de saída
-            st.header("4. Pasta de Saída")
-            output_dir = st.text_input("Caminho para salvar os PDFs gerados:", 
-                                      value=os.path.join(os.path.expanduser("~"), "Documents", "PDFs_Gerados"))
+            st.header("6. 📂 Pasta de Saída")
+            
+            # Inicializar pasta de saída no session_state
+            if 'output_folder_path' not in st.session_state:
+                st.session_state.output_folder_path = os.path.join(os.path.expanduser("~"), "Documents", "PDFs_Gerados")
+            
+            col1, col2 = st.columns([3, 1])
+            
+            with col1:
+                st.text_input(
+                    "Pasta para salvar os PDFs gerados:",
+                    value=st.session_state.output_folder_path,
+                    disabled=True,
+                    key="display_output_path"
+                )
+            
+            with col2:
+                if st.button("📂 Selecionar Pasta", key="btn_select_output", use_container_width=True):
+                    nova_pasta = selecionar_pasta("Selecione a pasta para salvar os PDFs")
+                    if nova_pasta:
+                        st.session_state.output_folder_path = nova_pasta
+                        st.rerun()
+            
+            output_dir = st.session_state.output_folder_path
             
             # Botão para iniciar processamento
-            if st.button("Iniciar Processamento"):
-                if not username or not password:
-                    st.error("Por favor, forneça as credenciais do SharePoint.")
-                elif not images_folder_input or not croquis_folder_input:
-                    st.error("Por favor, forneça os caminhos das pastas de imagens e croquis.")
-                elif not output_dir:
-                    st.error("Por favor, forneça um diretório de saída.")
+            if st.button("🚀 Iniciar Processamento", type="primary"):
+                
+                # Validações baseadas no modo selecionado
+                if modo_operacao.startswith("🌐 SharePoint"):
+                    # Modo SharePoint - validar credenciais e URLs
+                    if not username or not password:
+                        st.error("❌ Por favor, forneça as credenciais do SharePoint.")
+                    elif not images_folder_input or not croquis_folder_input:
+                        st.error("❌ Por favor, forneça os caminhos das pastas de imagens e croquis.")
+                    elif not output_dir:
+                        st.error("❌ Por favor, forneça um diretório de saída.")
+                    else:
+                        try:
+                            # Conectar ao SharePoint
+                            with st.spinner("🔄 Conectando ao SharePoint..."):
+                                ctx = connect_to_sharepoint(site_url, username, password)
+                                st.success("✅ Conexão com SharePoint estabelecida!")
+                            
+                            # Iniciar processamento SharePoint
+                            process_properties_streamlit(
+                                df, ctx, images_folder_url, croquis_folder_url, output_dir, entrega_nome
+                            )
+                        except Exception as e:
+                            st.error(f"❌ Erro no processamento SharePoint: {str(e)}")
+                            
                 else:
-                    try:
-                        # Conectar ao SharePoint
-                        with st.spinner("Conectando ao SharePoint..."):
-                            ctx = connect_to_sharepoint(site_url, username, password)
-                            st.success("Conexão com SharePoint estabelecida com sucesso!")
-                        
-                        # Iniciar processamento
-                        process_properties_streamlit(
-                            df, ctx, images_folder_url, croquis_folder_url, output_dir, entrega_nome
-                        )
-                    except Exception as e:
-                        st.error(f"Erro: {str(e)}")
+                    # Modo Pastas Locais - validar pastas
+                    if not images_folder_path or not croquis_folder_path:
+                        st.error("❌ Por favor, forneça os caminhos das pastas de imagens e croquis.")
+                    elif not os.path.exists(images_folder_path):
+                        st.error(f"❌ Pasta de imagens não encontrada: {images_folder_path}")
+                    elif not os.path.exists(croquis_folder_path):
+                        st.error(f"❌ Pasta de croquis não encontrada: {croquis_folder_path}")
+                    elif not output_dir:
+                        st.error("❌ Por favor, forneça um diretório de saída.")
+                    else:
+                        try:
+                            st.info("🚀 Iniciando processamento com arquivos locais...")
+                            
+                            # Iniciar processamento com arquivos locais
+                            process_properties_local(
+                                df, images_folder_path, croquis_folder_path, output_dir, entrega_nome
+                            )
+                        except Exception as e:
+                            st.error(f"❌ Erro no processamento local: {str(e)}")
         
         except Exception as e:
             st.error(f"Erro ao ler o arquivo Excel: {str(e)}")
