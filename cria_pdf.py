@@ -571,7 +571,7 @@ def create_pdf_extra_compressed(up_data, image_path, croqui_path, pdf_path):
 # 6) PROCESSAMENTO DAS LINHAS (UPs) COM STREAMLIT
 # =========================================================================
 
-def process_properties_streamlit(df, ctx, images_folder_url, croquis_folder_url, output_dir, entrega_nome):
+def process_properties_streamlit(df, ctx, images_folder_url, croquis_folder_url, output_dir, entrega_nome, organizacao_tipo="por_nucleo", unf_selecionada="UNF"):
     # Preparar diretório de saída
     os.makedirs(output_dir, exist_ok=True)
     
@@ -642,8 +642,21 @@ def process_properties_streamlit(df, ctx, images_folder_url, croquis_folder_url,
         if not possible_image_files and not possible_croquis_files:
             st.warning(f"Nenhum arquivo encontrado para UP {up_code}. Criando PDF com placeholders.")
             
-            # Criar pasta mesmo sem arquivos
-            folder_name = f"{entrega_nome} - {nucleo} - {ocorrencia_predominante}"
+            # Criar pasta mesmo sem arquivos baseada no tipo de organização
+            if organizacao_tipo == "por_propriedade":
+                # Buscar nome da propriedade
+                nome_propriedade = None
+                for coluna in ['Propriedade', 'Nome Propriedade', 'Fazenda', 'Nome']:
+                    if coluna in df.columns:
+                        nome_propriedade = str(row.get(coluna, f'Propriedade_{up_code}'))
+                        break
+                
+                if not nome_propriedade or nome_propriedade == 'nan':
+                    nome_propriedade = f"Propriedade_{up_code}"
+                
+                folder_name = f"{entrega_nome} - {unf_selecionada} - {nome_propriedade}"
+            else:
+                folder_name = f"{entrega_nome} - {nucleo} - {ocorrencia_predominante}"
             folder_path = os.path.join(output_dir, folder_name)
             os.makedirs(folder_path, exist_ok=True)
             
@@ -672,8 +685,21 @@ def process_properties_streamlit(df, ctx, images_folder_url, croquis_folder_url,
                 failed_up_list.append(f"{up_code} (erro geral com placeholders)")
                 continue
 
-        # Criar pasta quando pelo menos um arquivo for encontrado
-        folder_name = f"{entrega_nome} - {nucleo} - {ocorrencia_predominante}"
+        # Criar pasta quando pelo menos um arquivo for encontrado baseada no tipo de organização
+        if organizacao_tipo == "por_propriedade":
+            # Buscar nome da propriedade
+            nome_propriedade = None
+            for coluna in ['Propriedade', 'Nome Propriedade', 'Fazenda', 'Nome']:
+                if coluna in df.columns:
+                    nome_propriedade = str(row.get(coluna, f'Propriedade_{up_code}'))
+                    break
+            
+            if not nome_propriedade or nome_propriedade == 'nan':
+                nome_propriedade = f"Propriedade_{up_code}"
+            
+            folder_name = f"{entrega_nome} - {unf_selecionada} - {nome_propriedade}"
+        else:
+            folder_name = f"{entrega_nome} - {nucleo} - {ocorrencia_predominante}"
         folder_path = os.path.join(output_dir, folder_name)
         os.makedirs(folder_path, exist_ok=True)
 
@@ -772,9 +798,72 @@ def process_properties_streamlit(df, ctx, images_folder_url, croquis_folder_url,
 # 7) PROCESSAMENTO COM ARQUIVOS LOCAIS
 # =========================================================================
 
-def process_properties_local(df, images_folder_path, croquis_folder_path, output_dir, entrega_nome):
+def _processar_up_individual(row, up_code, folder_path, image_files, croquis_files, status_container, index, total_ups, successful_pdfs, failed_ups, failed_up_list, large_files, ups_sem_croqui):
+    """
+    Função auxiliar para processar uma UP individual
+    """
+    # Filtrar imagem e croqui pelo código da UP
+    possible_image_files = [
+        (n, path)
+        for (n, path) in image_files
+        if n[:6].upper() == up_code.upper()
+    ]
+    possible_croquis_files = [
+        (n, path)
+        for (n, path) in croquis_files
+        if up_code.upper() in n.upper()
+    ]
+
+    # Definir caminhos dos arquivos de trabalho
+    image_path = os.path.join(folder_path, f"{up_code}_image.jpg")
+    croqui_path = os.path.join(folder_path, f"{up_code}_croqui.jpg")
+
+    # Copiar arquivos se existirem
+    if possible_image_files:
+        image_name, source_image_path = possible_image_files[0]
+        copy_local_file(source_image_path, image_path)
+        st.info(f"📷 Imagem copiada: {image_name}")
+    else:
+        st.warning(f"⚠️ Imagem não encontrada para UP {up_code}. Será usado placeholder.")
+
+    if possible_croquis_files:
+        croqui_name, source_croqui_path = possible_croquis_files[0]
+        copy_local_file(source_croqui_path, croqui_path)
+        st.info(f"🗺️ Croqui copiado: {croqui_name}")
+    else:
+        st.warning(f"⚠️ Croqui não encontrado para UP {up_code}. Será usado placeholder.")
+        ups_sem_croqui.append(up_code)  # Adicionar à lista de UPs sem croqui
+
+    # Criar dados para o PDF
+    up_data = {
+        'UP-C-R': str(row.get('UP-C-R', up_code)),
+        'UP': up_code,
+        'Nucleo': str(row.get('Nucleo', 'N/A')),
+        'Data_Ocorrência': str(row.get('Data_Ocorrência', 'N/A')),
+        'Idade': str(row.get('Idade', 'N/A')),
+        'Quant.Ocorrências': str(row.get('Quant.Ocorrências', 'N/A')),
+        'Ocorrência Predominante': str(row.get('Ocorrência Predominante', 'N/A')),
+        'Severidade Predominante': str(row.get('Severidade Predominante', 'N/A')),
+        'Area UP': str(row.get('Area UP', 'N/A')),
+        'Area Liquida': str(row.get('Area Liquida', 'N/A')),
+        'Incidencia': str(row.get('Incidencia', 'N/A')),
+        'Quantidade de Imagens*': str(row.get('Quantidade de Imagens*', 'N/A')),
+        'Recomendacao': str(row.get('Recomendacao', 'N/A'))
+    }
+
+    # Criar PDF usando a função existente com placeholders
+    pdf_path = os.path.join(folder_path, f"{up_code}.pdf")
+    file_size, success = create_pdf_with_placeholders(up_data, image_path, croqui_path, pdf_path)
+    
+    return file_size, success
+
+def process_properties_local(df, images_folder_path, croquis_folder_path, output_dir, entrega_nome, organizacao_tipo="por_nucleo", unf_selecionada="UNF"):
     """
     Processa as UPs usando arquivos locais ao invés do SharePoint
+    
+    Args:
+        organizacao_tipo: "por_nucleo" ou "por_propriedade"
+        unf_selecionada: Nome da UNF selecionada pelo usuário
     """
     # Preparar diretório de saída
     os.makedirs(output_dir, exist_ok=True)
@@ -819,102 +908,170 @@ def process_properties_local(df, images_folder_path, croquis_folder_path, output
     failed_ups = 0
     failed_up_list = []
     large_files = []  # Para rastrear arquivos que ficaram grandes
+    ups_sem_croqui = []  # Para rastrear UPs sem croqui encontrado
     
     # Criar barra de progresso
     progress_bar = st.progress(0)
     
-    # Para cada linha no DataFrame
-    for index, row in df.iterrows():
-        try:
-            # Obter código da UP
-            up_code = str(row.get('UP', f'UP_{index+1}')).strip()
-            
-            # Atualizar status
-            status_container.text(f"🔄 Processando UP {up_code}... ({index+1}/{total_ups})")
-            
-            # Obter dados para o PDF
-            nucleo = str(row.get('Nucleo', 'N/A'))
-            ocorrencia_predominante = str(row.get('Ocorrência Predominante', 'N/A'))
-            
-            # Filtrar imagem e croqui pelo código da UP
-            possible_image_files = [
-                (n, path)
-                for (n, path) in image_files
-                if n[:6].upper() == up_code.upper()
-            ]
-            possible_croquis_files = [
-                (n, path)
-                for (n, path) in croquis_files
-                if up_code.upper() in n.upper()
-            ]
-
-            # Se não encontrar arquivos, usar placeholders (não falhar)
-            if not possible_image_files and not possible_croquis_files:
-                st.warning(f"⚠️ Nenhum arquivo encontrado para UP {up_code}. Usando placeholders.")
-            
-            # Criar pasta quando pelo menos uma UP for processada
-            folder_name = f"{entrega_nome} - {nucleo} - {ocorrencia_predominante}"
-            folder_path = os.path.join(output_dir, folder_name)
-            os.makedirs(folder_path, exist_ok=True)
-
-            # Definir caminhos dos arquivos de trabalho
-            image_path = os.path.join(folder_path, f"{up_code}_image.jpg")
-            croqui_path = os.path.join(folder_path, f"{up_code}_croqui.jpg")
-
-            # Copiar arquivos se existirem
-            if possible_image_files:
-                image_name, source_image_path = possible_image_files[0]
-                copy_local_file(source_image_path, image_path)
-                st.info(f"📷 Imagem copiada: {image_name}")
-            else:
-                st.warning(f"⚠️ Imagem não encontrada para UP {up_code}. Será usado placeholder.")
-
-            if possible_croquis_files:
-                croqui_name, source_croqui_path = possible_croquis_files[0]
-                copy_local_file(source_croqui_path, croqui_path)
-                st.info(f"🗺️ Croqui copiado: {croqui_name}")
-            else:
-                st.warning(f"⚠️ Croqui não encontrado para UP {up_code}. Será usado placeholder.")
-
-            # Criar dados para o PDF
-            up_data = {
-                'UP-C-R': str(row.get('UP-C-R', up_code)),
-                'UP': up_code,
-                'Nucleo': nucleo,
-                'Data_Ocorrência': str(row.get('Data_Ocorrência', 'N/A')),
-                'Idade': str(row.get('Idade', 'N/A')),
-                'Quant.Ocorrências': str(row.get('Quant.Ocorrências', 'N/A')),
-                'Ocorrência Predominante': ocorrencia_predominante,
-                'Severidade Predominante': str(row.get('Severidade Predominante', 'N/A')),
-                'Area UP': str(row.get('Area UP', 'N/A')),
-                'Area Liquida': str(row.get('Area Liquida', 'N/A')),
-                'Incidencia': str(row.get('Incidencia', 'N/A')),
-                'Quantidade de Imagens*': str(row.get('Quantidade de Imagens*', 'N/A')),
-                'Recomendacao': str(row.get('Recomendacao', 'N/A'))
-            }
-
-            # Criar PDF usando a função existente com placeholders
-            pdf_path = os.path.join(folder_path, f"{up_code}.pdf")
-            file_size, success = create_pdf_with_placeholders(up_data, image_path, croqui_path, pdf_path)
-            
-            if success:
-                successful_pdfs += 1
-                if file_size > 9.0:
-                    large_files.append(f"{up_code} ({file_size} MB)")
-                    st.warning(f"⚠️ PDF grande: {file_size} MB")
-                else:
-                    st.success(f"✅ PDF criado: {up_code} ({file_size} MB)")
-            else:
-                failed_ups += 1
-                failed_up_list.append(f"{up_code} (erro ao criar PDF)")
-
-        except Exception as e:
-            st.error(f"❌ Erro ao processar UP {up_code}: {str(e)}")
-            failed_ups += 1
-            failed_up_list.append(f"{up_code} (erro: {str(e)[:50]}...)")
+    # Se for organização por propriedade, agrupar primeiro por propriedade
+    if organizacao_tipo == "por_propriedade":
+        # Identificar coluna de propriedade (busca case-insensitive)
+        propriedade_col = None
+        colunas_possiveis = ['propriedade', 'Propriedade', 'Nome Propriedade', 'nome propriedade', 'Fazenda', 'fazenda', 'Nome', 'nome']
         
-        # Atualizar progresso
-        progress_bar.progress((index + 1) / total_ups)
+        # Primeiro tenta busca exata
+        for coluna in colunas_possiveis:
+            if coluna in df.columns:
+                propriedade_col = coluna
+                break
+        
+        # Se não encontrou, tenta busca case-insensitive
+        if not propriedade_col:
+            df_columns_lower = [col.lower() for col in df.columns]
+            for coluna_busca in ['propriedade', 'nome propriedade', 'fazenda', 'nome']:
+                if coluna_busca in df_columns_lower:
+                    # Encontra a coluna original correspondente
+                    idx = df_columns_lower.index(coluna_busca)
+                    propriedade_col = df.columns[idx]
+                    break
+        
+        # Debug: mostrar colunas disponíveis
+        if not propriedade_col:
+            st.error(f"❌ Colunas disponíveis no DataFrame: {list(df.columns)}")
+        else:
+            st.info(f"✅ Usando coluna de propriedade: '{propriedade_col}'")
+        
+        # Agrupar por propriedade
+        if propriedade_col:
+            propriedades_unicas = df[propriedade_col].unique()
+            st.info(f"📁 Encontradas {len(propriedades_unicas)} propriedade(s) únicas")
+            
+            # Contador global para progresso correto
+            ups_processadas_global = 0
+            
+            # Para cada propriedade única
+            for propriedade in propriedades_unicas:
+                if pd.isna(propriedade) or str(propriedade).strip() == '':
+                    continue
+                    
+                # Filtrar UPs desta propriedade
+                ups_propriedade = df[df[propriedade_col] == propriedade]
+                
+                # Criar pasta da propriedade
+                folder_name = f"{entrega_nome} - {unf_selecionada} - {str(propriedade)}"
+                folder_path = os.path.join(output_dir, folder_name)
+                os.makedirs(folder_path, exist_ok=True)
+                
+                st.info(f"📂 Processando propriedade: {propriedade} ({len(ups_propriedade)} UPs)")
+                
+                # Processar todas as UPs desta propriedade
+                for local_idx, (index, row) in enumerate(ups_propriedade.iterrows()):
+                    try:
+                        # Incrementar contador global
+                        ups_processadas_global += 1
+                        
+                        # Obter código da UP
+                        up_code = str(row.get('UP', f'UP_{local_idx+1}')).strip()
+                        
+                        # Atualizar status
+                        status_container.text(f"🔄 Processando UP {up_code} - {propriedade}... ({ups_processadas_global}/{total_ups})")
+                        
+                        # Obter dados para o PDF
+                        nucleo = str(row.get('Nucleo', 'N/A'))
+                        ocorrencia_predominante = str(row.get('Ocorrência Predominante', 'N/A'))
+                        
+                        # Filtrar imagem e croqui pelo código da UP
+                        possible_image_files = [
+                            (n, path)
+                            for (n, path) in image_files
+                            if n[:6].upper() == up_code.upper()
+                        ]
+                        possible_croquis_files = [
+                            (n, path)
+                            for (n, path) in croquis_files
+                            if up_code.upper() in n.upper()
+                        ]
+
+                        # Se não encontrar arquivos, usar placeholders (não falhar)
+                        if not possible_image_files and not possible_croquis_files:
+                            st.warning(f"⚠️ Nenhum arquivo encontrado para UP {up_code}. Usando placeholders.")
+                        
+                        # Usar a pasta da propriedade já criada
+                        # folder_path já foi definido acima para esta propriedade
+                        
+                        # Processar arquivos da UP na pasta da propriedade
+                        file_size, success = _processar_up_individual(row, up_code, folder_path, image_files, croquis_files, 
+                                                                     status_container, ups_processadas_global, total_ups, successful_pdfs, 
+                                                                     failed_ups, failed_up_list, large_files, ups_sem_croqui)
+                        
+                        if success:
+                            successful_pdfs += 1
+                            if file_size > 9.0:
+                                large_files.append(f"{up_code} ({file_size} MB)")
+                                st.warning(f"⚠️ PDF grande: {file_size} MB")
+                            else:
+                                st.success(f"✅ PDF criado: {up_code} ({file_size} MB)")
+                        else:
+                            failed_ups += 1
+                            failed_up_list.append(f"{up_code} (erro ao criar PDF)")
+                        
+                        # Atualizar progresso de forma segura
+                        progress_value = min(ups_processadas_global / total_ups, 1.0)
+                        progress_bar.progress(progress_value)
+                        
+                    except Exception as e:
+                        failed_ups += 1
+                        failed_up_list.append(up_code)
+                        st.error(f"❌ Erro ao processar UP {up_code}: {str(e)}")
+                        # Atualizar progresso mesmo com erro
+                        progress_value = min(ups_processadas_global / total_ups, 1.0)
+                        progress_bar.progress(progress_value)
+                        continue
+        else:
+            st.error("❌ Nenhuma coluna de propriedade encontrada para organização por propriedade")
+            return
+    else:
+        # Organização original por UP individual
+        for index, row in df.iterrows():
+            try:
+                # Obter código da UP
+                up_code = str(row.get('UP', f'UP_{index+1}')).strip()
+                
+                # Atualizar status
+                status_container.text(f"🔄 Processando UP {up_code}... ({index+1}/{total_ups})")
+                
+                # Obter dados para o PDF
+                nucleo = str(row.get('Nucleo', 'N/A'))
+                ocorrencia_predominante = str(row.get('Ocorrência Predominante', 'N/A'))
+                
+                # Pasta única por núcleo (comportamento original)
+                folder_name = f"{entrega_nome} - {nucleo} - {ocorrencia_predominante}"
+                folder_path = os.path.join(output_dir, folder_name)
+                os.makedirs(folder_path, exist_ok=True)
+                
+                # Processar UP individual
+                file_size, success = _processar_up_individual(row, up_code, folder_path, image_files, croquis_files, 
+                                                            status_container, index, total_ups, successful_pdfs, 
+                                                            failed_ups, failed_up_list, large_files, ups_sem_croqui)
+                
+                if success:
+                    successful_pdfs += 1
+                    if file_size > 9.0:
+                        large_files.append(f"{up_code} ({file_size} MB)")
+                        st.warning(f"⚠️ PDF grande: {file_size} MB")
+                    else:
+                        st.success(f"✅ PDF criado: {up_code} ({file_size} MB)")
+                else:
+                    failed_ups += 1
+                    failed_up_list.append(f"{up_code} (erro ao criar PDF)")
+                    
+            except Exception as e:
+                st.error(f"❌ Erro ao processar UP {up_code}: {str(e)}")
+                failed_ups += 1
+                failed_up_list.append(f"{up_code} (erro: {str(e)[:50]}...)")
+            
+            # Atualizar progresso
+            progress_bar.progress((index + 1) / total_ups)
     
     # Limpar contêineres de progresso
     progress_container.empty()
@@ -940,6 +1097,13 @@ def process_properties_local(df, images_folder_path, croquis_folder_path, output
         st.error("### ❌ UPs que falharam:")
         for failed_up in failed_up_list:
             st.write(f"- {failed_up}")
+    
+    if ups_sem_croqui:
+        st.warning("### 🗺️ UPs sem croqui encontrado:")
+        st.write(f"**Total de UPs sem croqui:** {len(ups_sem_croqui)}")
+        for up_sem_croqui in sorted(ups_sem_croqui):
+            st.write(f"- {up_sem_croqui}")
+        st.info("💡 Dica: Verifique se os arquivos de croqui estão na pasta correta e se o nome contém o código da UP.")
     
     # Link para o diretório com os PDFs gerados
     st.success(f"📁 Os PDFs foram salvos em: {output_dir}")
@@ -1010,8 +1174,51 @@ def criar_pdf_streamlit():
             st.write("Preview dos dados:")
             st.dataframe(df.head())
             
+            # Análise das UNFs disponíveis (primeira coluna)
+            primeira_coluna = df.columns[0]
+            st.write(f"**Coluna UNF detectada:** {primeira_coluna}")
+            
+            unfs_disponiveis = sorted(df[primeira_coluna].dropna().unique().tolist())
+            st.write(f"**UNFs encontradas no arquivo:** {len(unfs_disponiveis)}")
+            
+            # Seleção de UNF
+            st.header("2. 🎯 Seleção de UNF para Processamento")
+            
+            col1, col2 = st.columns([2, 1])
+            with col1:
+                unf_selecionada = st.selectbox(
+                    "Selecione a UNF que deseja processar:",
+                    options=unfs_disponiveis,
+                    help="Escolha qual UNF será processada nesta execução."
+                )
+            
+            with col2:
+                # Mostrar quantas UPs tem a UNF selecionada
+                if unf_selecionada:
+                    ups_na_unf = len(df[df[primeira_coluna] == unf_selecionada])
+                    st.metric("UPs nesta UNF", ups_na_unf)
+            
+            # Filtrar DataFrame pela UNF selecionada
+            df_filtered = df[df[primeira_coluna] == unf_selecionada].copy()
+            st.info(f"📊 Processando UNF **{unf_selecionada}** com **{len(df_filtered)}** UPs")
+            
+            # Opção de organização dos arquivos
+            st.header("3. 📁 Organização dos Arquivos")
+            
+            organizacao_tipo = st.radio(
+                "Como deseja organizar as pastas dos PDFs?",
+                [
+                    "📂 Por Núcleo (pasta única para toda a UNF)",
+                    "🗂️ Por Propriedade (uma pasta para cada UP)"
+                ],
+                help="Núcleo: Todos os PDFs da UNF ficam na mesma pasta. Propriedade: Cada UP tem sua própria pasta."
+            )
+            
+            # Usar DataFrame filtrado para o restante do processamento
+            df = df_filtered
+            
             # Seleção do modo de operação
-            st.header("2. 🎯 Modo de Operação")
+            st.header("4. 🔄 Modo de Operação")
             
             modo_operacao = st.radio(
                 "Escolha de onde vêm as imagens e croquis:",
@@ -1024,13 +1231,13 @@ def criar_pdf_streamlit():
             
             if modo_operacao.startswith("🌐 SharePoint"):
                 # Configuração do SharePoint
-                st.header("3. 🔐 Configuração do SharePoint")
+                st.header("5. 🔐 Configuração do SharePoint")
                 
                 username = st.text_input("E-mail do SharePoint:", value=default_username)
                 password = st.text_input("Senha do SharePoint:", type="password")
                 
                 # Configuração dos caminhos SharePoint
-                st.header("4. 🌐 Configuração de Pastas SharePoint")
+                st.header("6. 🌐 Configuração de Pastas SharePoint")
                 
                 st.markdown("""
                 **Dica para URL do SharePoint:**
@@ -1055,7 +1262,7 @@ def criar_pdf_streamlit():
                     
             else:
                 # Configuração de Pastas Locais
-                st.header("3. 📁 Configuração de Pastas Locais")
+                st.header("5. 📁 Configuração de Pastas Locais")
                 
                 st.markdown("""
                 **Instruções:**
@@ -1139,7 +1346,7 @@ def criar_pdf_streamlit():
             entrega_nome = st.text_input("📦 Nome da Entrega (ex: Entrega 4):", value="Entrega")
             
             # Seleção da pasta de saída
-            st.header("6. 📂 Pasta de Saída")
+            st.header("7. 📂 Pasta de Saída")
             
             # Inicializar pasta de saída no session_state
             if 'output_folder_path' not in st.session_state:
@@ -1184,8 +1391,9 @@ def criar_pdf_streamlit():
                                 st.success("✅ Conexão com SharePoint estabelecida!")
                             
                             # Iniciar processamento SharePoint
+                            organizacao_param = "por_propriedade" if organizacao_tipo.startswith("🗂️") else "por_nucleo"
                             process_properties_streamlit(
-                                df, ctx, images_folder_url, croquis_folder_url, output_dir, entrega_nome
+                                df, ctx, images_folder_url, croquis_folder_url, output_dir, entrega_nome, organizacao_param, unf_selecionada
                             )
                         except Exception as e:
                             st.error(f"❌ Erro no processamento SharePoint: {str(e)}")
@@ -1205,8 +1413,9 @@ def criar_pdf_streamlit():
                             st.info("🚀 Iniciando processamento com arquivos locais...")
                             
                             # Iniciar processamento com arquivos locais
+                            organizacao_param = "por_propriedade" if organizacao_tipo.startswith("🗂️") else "por_nucleo"
                             process_properties_local(
-                                df, images_folder_path, croquis_folder_path, output_dir, entrega_nome
+                                df, images_folder_path, croquis_folder_path, output_dir, entrega_nome, organizacao_param, unf_selecionada
                             )
                         except Exception as e:
                             st.error(f"❌ Erro no processamento local: {str(e)}")
