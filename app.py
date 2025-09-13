@@ -99,8 +99,38 @@ def lancamento_fenix():
                 st.warning("Não há registros sem laudo para processar.")
                 return
             
-            # Agrupa por núcleo
-            nucleos_sem_laudo = df_sem_laudo.groupby('Nucleo').size().reset_index(name='quantidade_ups')
+            # Seleção do tipo de organização
+            st.subheader("📋 Tipo de Organização dos Laudos")
+            tipo_organizacao = st.radio(
+                "Como deseja organizar os laudos?",
+                [
+                    "🏢 Por Núcleo (Método Original)",
+                    "🏗️ Por Propriedade (Coluna 4 da tabela)"
+                ],
+                help="Núcleo: Agrupa UPs por núcleo. Propriedade: Agrupa UPs por propriedade (recomendado para laudos específicos por propriedade)."
+            )
+            
+            # Definir coluna de agrupamento baseada na seleção
+            if tipo_organizacao.startswith("🏗️ Por Propriedade"):
+                # Usar coluna 4 (índice 3) como coluna de propriedade
+                coluna_agrupamento = df.columns[3]  # Coluna 4 (índice base 0)
+                st.info(f"✅ Usando coluna de propriedade: **{coluna_agrupamento}**")
+                
+                # Agrupar por propriedade
+                grupos_sem_laudo = df_sem_laudo.groupby(coluna_agrupamento).size().reset_index(name='quantidade_ups')
+                grupos_sem_laudo = grupos_sem_laudo.rename(columns={coluna_agrupamento: 'Agrupamento'})
+                tipo_label = "Propriedades"
+                icone_agrupamento = "🏗️"
+            else:
+                # Usar núcleo (método original)
+                coluna_agrupamento = 'Nucleo'
+                grupos_sem_laudo = df_sem_laudo.groupby('Nucleo').size().reset_index(name='quantidade_ups')
+                grupos_sem_laudo = grupos_sem_laudo.rename(columns={'Nucleo': 'Agrupamento'})
+                tipo_label = "Núcleos"
+                icone_agrupamento = "🏢"
+            
+            # Manter compatibilidade com código existente
+            nucleos_sem_laudo = grupos_sem_laudo
             
             # Overview dos dados
             st.subheader("📊 Overview dos Dados")
@@ -113,39 +143,50 @@ def lancamento_fenix():
             with col3:
                 st.metric("Total de registros", len(df))
             
-            # Tabela de núcleos
-            st.subheader("🏢 Núcleos sem Laudo")
-            st.dataframe(nucleos_sem_laudo, use_container_width=True)
+            # Tabela de grupos (núcleos ou propriedades)
+            st.subheader(f"{icone_agrupamento} {tipo_label} sem Laudo")
+            st.dataframe(grupos_sem_laudo, use_container_width=True)
             
             # Opções de lançamento
             st.subheader("🚀 Opções de Lançamento")
             
-            # Botões para cada núcleo
-            cols = st.columns(min(len(nucleos_sem_laudo) + 1, 4))
+            # Botões para cada grupo
+            cols = st.columns(min(len(grupos_sem_laudo) + 1, 4))
             
-            # Botão para todos os núcleos
+            # Botão para todos os grupos
             with cols[0]:
-                if st.button("🎯 Todos os Núcleos", key="todos_nucleos", use_container_width=True):
-                    st.session_state.nucleos_selecionados = nucleos_sem_laudo['Nucleo'].tolist()
+                if st.button(f"🎯 Todos os {tipo_label}", key="todos_grupos", use_container_width=True):
+                    st.session_state.grupos_selecionados = grupos_sem_laudo['Agrupamento'].tolist()
                     st.session_state.opcao_selecionada = "todos"
+                    st.session_state.tipo_organizacao = tipo_organizacao
+                    st.session_state.coluna_agrupamento = coluna_agrupamento
             
-            # Botões individuais para cada núcleo
-            for idx, nucleo in enumerate(nucleos_sem_laudo['Nucleo'].tolist()):
+            # Botões individuais para cada grupo
+            for idx, grupo in enumerate(grupos_sem_laudo['Agrupamento'].tolist()):
                 col_idx = (idx + 1) % 4
                 with cols[col_idx]:
-                    if st.button(f"📍 {nucleo}", key=f"nucleo_{nucleo}", use_container_width=True):
-                        st.session_state.nucleos_selecionados = [nucleo]
-                        st.session_state.opcao_selecionada = nucleo
+                    if st.button(f"{icone_agrupamento} {grupo}", key=f"grupo_{idx}_{grupo}", use_container_width=True):
+                        st.session_state.grupos_selecionados = [grupo]
+                        st.session_state.opcao_selecionada = grupo
+                        st.session_state.tipo_organizacao = tipo_organizacao
+                        st.session_state.coluna_agrupamento = coluna_agrupamento
             
             # Se uma opção foi selecionada, mostra o botão Play
             if hasattr(st.session_state, 'opcao_selecionada'):
                 st.success(f"Selecionado: {st.session_state.opcao_selecionada}")
                 
-                # Dados que serão processados
-                ups_para_processar = df_sem_laudo[df_sem_laudo['Nucleo'].isin(st.session_state.nucleos_selecionados)]
+                # Dados que serão processados baseado no tipo de organização
+                if hasattr(st.session_state, 'tipo_organizacao') and st.session_state.tipo_organizacao.startswith("🏗️ Por Propriedade"):
+                    # Filtrar por propriedade
+                    ups_para_processar = df_sem_laudo[df_sem_laudo[st.session_state.coluna_agrupamento].isin(st.session_state.grupos_selecionados)]
+                    colunas_exibir = ['UP', st.session_state.coluna_agrupamento, 'Ocorrência Predominante', 'Severidade Predominante', 'Incidencia']
+                else:
+                    # Filtrar por núcleo (método original)
+                    ups_para_processar = df_sem_laudo[df_sem_laudo['Nucleo'].isin(st.session_state.grupos_selecionados)]
+                    colunas_exibir = ['UP', 'Nucleo', 'Ocorrência Predominante', 'Severidade Predominante', 'Incidencia']
                 
                 st.subheader("📋 Dados que serão processados:")
-                st.dataframe(ups_para_processar[['UP', 'Nucleo', 'Ocorrência Predominante', 'Severidade Predominante', 'Incidencia']], use_container_width=True)
+                st.dataframe(ups_para_processar[colunas_exibir], use_container_width=True)
                 
                 # Botão Play para iniciar
                 if st.button("▶️ INICIAR LANÇAMENTO", key="play_button", type="primary", use_container_width=True):
@@ -154,7 +195,7 @@ def lancamento_fenix():
                     if is_continuation:
                         st.info("🔄 Continuando com navegador aberto...")
                     
-                    processar_lancamento(ups_para_processar, st.session_state.nucleos_selecionados, df)
+                    processar_lancamento_novo(ups_para_processar, st.session_state.grupos_selecionados, df, st.session_state.tipo_organizacao, st.session_state.coluna_agrupamento)
                     
         except Exception as e:
             st.error(f"Erro ao ler o arquivo: {str(e)}")
@@ -237,6 +278,117 @@ def processar_lancamento(df_ups, nucleos_selecionados, df_original):
         
     except Exception as e:
         st.error(f"Erro durante o processamento: {str(e)}")
+
+def processar_lancamento_novo(df_ups, grupos_selecionados, df_original, tipo_organizacao, coluna_agrupamento):
+    """
+    Função aprimorada que processa o lançamento tanto por núcleo quanto por propriedade
+    """
+    try:
+        st.info("🚀 Iniciando processamento...")
+        
+        # Salvar DataFrame original no session_state para posterior atualização
+        st.session_state.df_original = df_original.copy()
+        
+        # Determinar se é por propriedade ou por núcleo e processar adequadamente
+        if tipo_organizacao.startswith("🏗️ Por Propriedade"):
+            st.info(f"🏗️ Processando por Propriedade usando coluna: {coluna_agrupamento}")
+            
+            # Para propriedades, precisamos filtrar o DataFrame pela propriedade selecionada
+            # e depois simular como se fosse um núcleo
+            df_filtrado_por_propriedade = pd.DataFrame()
+            
+            for propriedade in grupos_selecionados:
+                st.info(f"📋 Filtrando UPs da propriedade: {propriedade}")
+                ups_desta_propriedade = df_ups[df_ups[coluna_agrupamento] == propriedade]
+                st.info(f"📊 Encontradas {len(ups_desta_propriedade)} UPs para propriedade {propriedade}")
+                df_filtrado_por_propriedade = pd.concat([df_filtrado_por_propriedade, ups_desta_propriedade], ignore_index=True)
+            
+            # Agora vamos criar um "núcleo simulado" para cada propriedade
+            # Modificar temporariamente a coluna "Nucleo" para conter o nome da propriedade
+            df_para_processamento = df_filtrado_por_propriedade.copy()
+            
+            # Para cada propriedade selecionada, substituir o valor da coluna "Nucleo" 
+            # pelo nome da propriedade para que o sistema de automação funcione
+            for propriedade in grupos_selecionados:
+                mask = df_para_processamento[coluna_agrupamento] == propriedade
+                df_para_processamento.loc[mask, 'Nucleo'] = propriedade
+            
+            resultado = executar_lancamento_fenix(df_para_processamento, grupos_selecionados)
+            
+        else:
+            st.info("🏢 Processando por Núcleo (método original)")
+            resultado = executar_lancamento_fenix(df_ups, grupos_selecionados)
+        
+        if resultado:
+            st.balloons()  # Animação de comemoração
+            
+            # Verificar se deve mostrar opção de continuar
+            if hasattr(st.session_state, 'mostrar_continuar_lancamento') and st.session_state.mostrar_continuar_lancamento:
+                if tipo_organizacao.startswith("🏗️ Por Propriedade"):
+                    st.success("🎉 Propriedade processada com sucesso!")
+                    st.info("🚀 Pronto para processar outra propriedade - use os botões acima!")
+                else:
+                    st.success("🎉 Núcleo processado com sucesso!")
+                    st.info("🚀 Pronto para processar outro núcleo - use os botões acima!")
+            else:
+                if tipo_organizacao.startswith("🏗️ Por Propriedade"):
+                    st.success("🎉 Processamento de todas as propriedades concluído!")
+                else:
+                    st.success("🎉 Processamento de todos os núcleos concluído!")
+            
+        # Funcionalidade de atualização da planilha (mantida igual)
+        if hasattr(st.session_state, 'mostrar_opcao_excel') and st.session_state.mostrar_opcao_excel:
+            ups_processadas = getattr(st.session_state, 'ups_processadas_com_sucesso', [])
+            if ups_processadas:
+                st.markdown("---")
+                st.subheader("📝 Atualização da Planilha")
+                st.info(f"✅ {len(ups_processadas)} UP(s) processada(s) com sucesso: {', '.join(ups_processadas)}")
+                st.info("Deseja atualizar o status dessas UPs de 'NÃO' para 'SIM' na coluna 'Laudo Existente'?")
+                
+                # Debug: Mostrar informações sobre o DataFrame original
+                if hasattr(st.session_state, 'df_original'):
+                    df_info = st.session_state.df_original
+                    total_nao = len(df_info[df_info['Laudo Existente'].str.upper() == 'NÃO'])
+                    total_sim = len(df_info[df_info['Laudo Existente'].str.upper() == 'SIM'])
+                    st.info(f"📊 Status atual da planilha: {total_nao} com 'NÃO', {total_sim} com 'SIM'")
+                
+                col1, col2 = st.columns(2)
+                with col1:
+                    if st.button("✅ SIM - Atualizar Status", key="atualizar_sim_novo", type="primary"):
+                        st.info("🔄 Iniciando atualização da planilha...")
+                        
+                        try:
+                            resultado_atualizacao = atualizar_status_planilha(st.session_state.df_original, ups_processadas)
+                            
+                            if resultado_atualizacao:
+                                st.success("📊 Planilha atualizada com sucesso!")
+                                st.success("🎉 Todas as UPs processadas com sucesso tiveram seu status atualizado para 'SIM'!")
+                                st.info("📥 Use o botão de download acima para baixar a planilha atualizada.")
+                                
+                                # Reset da opção após uso
+                                st.session_state.mostrar_opcao_excel = False
+                                st.rerun()
+                            else:
+                                st.error("❌ Erro ao atualizar a planilha ou nenhuma UP foi encontrada.")
+                        except Exception as update_error:
+                            st.error(f"❌ Erro durante atualização: {str(update_error)}")
+                            import traceback
+                            st.error(f"❌ Stack trace completo: {traceback.format_exc()}")
+                            
+                with col2:
+                    if st.button("❌ NÃO - Manter Original", key="atualizar_nao_novo"):
+                        st.info("✋ Planilha mantida sem alterações.")
+                        # Reset da opção após uso
+                        st.session_state.mostrar_opcao_excel = False
+                        st.rerun()
+                        
+        if not resultado:
+            st.error("❌ Houve erros durante o processamento. Verifique os logs acima.")
+        
+    except Exception as e:
+        st.error(f"Erro durante o processamento: {str(e)}")
+        import traceback
+        st.error(f"Stack trace: {traceback.format_exc()}")
 
 def criar_pdf():
     # Chama a função do módulo cria_pdf.py
