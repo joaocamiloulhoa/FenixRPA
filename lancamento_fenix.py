@@ -20,7 +20,8 @@ FENIX_URL = "https://fenixflorestal.suzanonet.com.br/"
 
 # Textos padronizados para os laudos
 TEXTOS_PADRAO = {
-    'objetivo': "O presente relatório foi elaborado por solicitação do GEOCAT com o objetivo de avaliar os efeitos dos sinistros nos plantios do Núcleo {nucleo} e determinar as recomendações para as áreas avaliadas em campo pela área de Mensuração.",
+    'objetivo_nucleo': "O presente relatório foi elaborado por solicitação do GEOCAT com o objetivo de avaliar os efeitos dos sinistros nos plantios do Núcleo {nome} e determinar as recomendações para as áreas avaliadas em campo pela área de Mensuração.",
+    'objetivo_propriedade': "O presente relatório foi elaborado por solicitação do GEOCAT com o objetivo de avaliar os efeitos dos sinistros nos plantios da Fazenda {nome} e determinar as recomendações para as áreas avaliadas em campo pela área de Mensuração.",
     
     'diagnostico': """Foi objeto deste Laudo as áreas afetadas por incêndios florestais e vendaval (Déficit Hídrico), conforme as características de danos a seguir:
 
@@ -195,10 +196,11 @@ def detectar_unf_por_nucleo(nucleo):
 # =========================================================================
 
 class FenixAutomation:
-    def __init__(self):
+    def __init__(self, tipo_organizacao='nucleo'):
         self.browser = None
         self.page = None
         self.playwright = None
+        self.tipo_organizacao = tipo_organizacao  # 'nucleo' ou 'propriedade'
         
         self.stats = {
             'inicio': None,
@@ -226,6 +228,29 @@ class FenixAutomation:
         
         # Log no console também
         print(formatted_message)
+    
+    def forcar_reinicializacao_navegador(self):
+        """Força a reinicialização do navegador limpando o estado"""
+        try:
+            self.log_status("🔄 Forçando reinicialização do navegador...")
+            
+            # Limpar session_state
+            st.session_state.browser_ativo = False
+            if hasattr(st.session_state, 'automation_instance'):
+                del st.session_state.automation_instance
+            
+            # Limpar instâncias locais
+            self.browser = None
+            self.page = None
+            self.context = None
+            self.playwright = None
+            
+            self.log_status("✅ Estado do navegador limpo. Próxima execução criará nova instância.")
+            return True
+            
+        except Exception as e:
+            self.log_status(f"❌ Erro ao forçar reinicialização: {str(e)}", "error")
+            return False
     
     async def inicializar_browser(self):
         """Inicializa o browser Playwright"""
@@ -307,10 +332,89 @@ class FenixAutomation:
             self.log_status(f"❌ Erro durante aguardo de login: {str(e)}", "error")
             return False
     
+    async def verificar_estado_navegador(self):
+        """Verifica se o navegador está responsivo e em que página estamos"""
+        try:
+            # Verificar se o navegador está responsivo
+            await self.page.evaluate('document.title')
+            
+            current_url = self.page.url
+            page_title = await self.page.title()
+            
+            self.log_status(f"🔍 Estado do navegador - URL: {current_url}")
+            self.log_status(f"🔍 Estado do navegador - Título: {page_title}")
+            
+            return True
+            
+        except Exception as e:
+            self.log_status(f"❌ Navegador não está responsivo: {str(e)}")
+            return False
+
+    async def voltar_para_inicio(self):
+        """Navega de volta para a página inicial se necessário"""
+        try:
+            # Primeiro verificar se o navegador está responsivo
+            if not await self.verificar_estado_navegador():
+                self.log_status("⚠️ Navegador não responsivo, tentando continuar mesmo assim...")
+                return False
+            
+            current_url = self.page.url
+            self.log_status(f"🔍 Verificando página atual: {current_url}")
+            
+            # Verificar se já estamos na página correta
+            try:
+                await self.page.wait_for_selector('button:has-text("Submissão de Laudos")', timeout=3000)
+                self.log_status("✅ Já estamos na página inicial correta!")
+                return True
+            except:
+                # Não estamos na página inicial
+                pass
+            
+            # Se não estamos na página inicial, voltar
+            if "fenixflorestal.suzanonet.com.br" not in current_url or "upload" in current_url.lower() or "assinatura" in current_url.lower():
+                self.log_status("🔄 Navegando de volta para a página inicial...")
+                await self.page.goto("https://fenixflorestal.suzanonet.com.br/")
+                await asyncio.sleep(2)
+                
+                # Verificar se chegamos na página inicial
+                try:
+                    await self.page.wait_for_selector('button:has-text("Submissão de Laudos")', timeout=15000)
+                    self.log_status("✅ Página inicial carregada com sucesso!")
+                    return True
+                except:
+                    self.log_status("⚠️ Botão 'Submissão de Laudos' ainda não encontrado após navegar...")
+                    
+                    # Tentar recarregar a página
+                    self.log_status("🔄 Tentando recarregar a página...")
+                    await self.page.reload()
+                    await asyncio.sleep(2)
+                    
+                    try:
+                        await self.page.wait_for_selector('button:has-text("Submissão de Laudos")', timeout=15000)
+                        self.log_status("✅ Página inicial carregada após recarregar!")
+                        return True
+                    except:
+                        self.log_status("❌ Não foi possível carregar a página inicial corretamente")
+                        return False
+            
+            return True
+            
+        except Exception as e:
+            self.log_status(f"❌ Erro ao voltar para início: {str(e)}")
+            return False
+
     async def navegar_para_upload(self):
         """Navega para a seção de upload de laudos"""
         try:
             self.log_status("📁 Navegando para 'Submissão de Laudos'...")
+            
+            # CORREÇÃO: Primeiro verificar se o navegador está responsivo
+            if not await self.verificar_estado_navegador():
+                raise Exception("Navegador não está responsivo")
+            
+            # CORREÇÃO: Primeiro tentar voltar para página inicial se necessário
+            if not await self.voltar_para_inicio():
+                raise Exception("Não foi possível navegar para a página inicial")
             
             # CORREÇÃO: Aguardar página carregar antes de procurar elementos
             await asyncio.sleep(2)
@@ -330,7 +434,10 @@ class FenixAutomation:
                 'button:has-text("Submissão de Laudos")',
                 'xpath=//button[contains(text(), "Submissão de Laudos")]',
                 'xpath=//*[contains(text(), "Submissão de Laudos")]',
-                '[role="button"]:has-text("Submissão de Laudos")'
+                '[role="button"]:has-text("Submissão de Laudos")',
+                'xpath=//button[contains(@class, "btn") and contains(text(), "Submissão")]',
+                'xpath=//div[contains(text(), "Submissão de Laudos")]',
+                'text="Submissão de Laudos"'
             ]
             
             submissao_btn = None
@@ -346,11 +453,29 @@ class FenixAutomation:
                     continue
             
             if not submissao_btn:
-                raise Exception("Botão 'Submissão de Laudos' não encontrado com nenhum seletor")
+                # CORREÇÃO: Tentar uma última vez com recarregamento da página
+                self.log_status("🔄 Última tentativa - recarregando página...")
+                await self.page.reload()
+                await asyncio.sleep(2)
+                
+                try:
+                    submissao_btn = await self.page.wait_for_selector('button:has-text("Submissão de Laudos")', timeout=10000)
+                    self.log_status("✅ Botão encontrado após recarregar página!")
+                except:
+                    # Debug: Mostrar todos os botões disponíveis
+                    try:
+                        buttons = await self.page.query_selector_all('button')
+                        self.log_status(f"🔍 Debug: Encontrados {len(buttons)} botões na página")
+                        for idx, btn in enumerate(buttons[:5]):  # Mostrar apenas os primeiros 5
+                            text = await btn.text_content()
+                            self.log_status(f"   Botão {idx+1}: '{text[:30]}'")
+                    except:
+                        pass
+                    raise Exception("Botão 'Submissão de Laudos' não encontrado mesmo após recarregar")
             
             # Clicar em "Submissão de Laudos"
             await submissao_btn.click()
-            await asyncio.sleep(3)  # Aguardar menu expandir
+            await asyncio.sleep(2)  # Aguardar menu expandir
             
             # Múltiplas estratégias para encontrar "Upload de Laudos"
             self.log_status("📤 Clicando em 'Upload de Laudos'...")
@@ -378,7 +503,7 @@ class FenixAutomation:
                 raise Exception("Link 'Upload de Laudos' não encontrado com nenhum seletor")
             
             await upload_link.click()
-            await asyncio.sleep(3)
+            await asyncio.sleep(2)
             
             # Validar se chegamos na página correta
             try:
@@ -392,14 +517,22 @@ class FenixAutomation:
         except Exception as e:
             self.log_status(f"❌ Erro ao navegar para upload: {str(e)}", "error")
             
-            # CORREÇÃO: Tentar diagnóstico da página atual
+            # CORREÇÃO: Tentar diagnóstico da página atual e recuperação
             try:
                 current_url = self.page.url
                 page_title = await self.page.title()
                 self.log_status(f"🔍 Diagnóstico - URL atual: {current_url}")
                 self.log_status(f"🔍 Diagnóstico - Título da página: {page_title}")
-            except:
-                self.log_status("⚠️ Não foi possível obter informações da página atual", "warning")
+                
+                # Tentar recuperação se estivermos em uma página inesperada
+                if "assinatura" in current_url.lower() or "finalizado" in current_url.lower():
+                    self.log_status("🔄 Detectada página de finalização, tentando voltar ao início...")
+                    await self.page.goto("https://fenixflorestal.suzanonet.com.br/")
+                    await asyncio.sleep(2)
+                    return await self.navegar_para_upload()  # Tentar novamente recursivamente
+                    
+            except Exception as diag_error:
+                self.log_status(f"⚠️ Erro no diagnóstico: {str(diag_error)}", "warning")
                 
             return False
     
@@ -659,14 +792,22 @@ class FenixAutomation:
             self.log_status(f"❌ Erro ao selecionar UNF: {str(e)}", "error")
             return False
     
-    async def preencher_campos_texto(self, nucleo):
+    async def preencher_campos_texto(self, nome, tipo_organizacao="nucleo"):
         """Preenche os campos de texto do formulário"""
         try:
             self.log_status("📄 Preenchendo campos de texto...")
             
+            # Escolher o texto correto baseado no tipo de organização
+            if tipo_organizacao == "propriedade":
+                texto_objetivo = TEXTOS_PADRAO['objetivo_propriedade'].format(nome=nome)
+                self.log_status(f"🏗️ Usando texto para Fazenda: {nome}")
+            else:
+                texto_objetivo = TEXTOS_PADRAO['objetivo_nucleo'].format(nome=nome)
+                self.log_status(f"🏢 Usando texto para Núcleo: {nome}")
+            
             # Lista de campos e seus textos
             campos = [
-                ("Objetivo", TEXTOS_PADRAO['objetivo'].format(nucleo=nucleo), 'textarea[name="objetivo"]'),
+                ("Objetivo", texto_objetivo, 'textarea[name="objetivo"]'),
                 ("Diagnóstico", TEXTOS_PADRAO['diagnostico'], 'textarea[name="diagnostico"]'),
                 ("Lições Aprendidas", TEXTOS_PADRAO['licoes_aprendidas'], 'textarea[name="licoesAprendidas"]'),
                 ("Considerações Finais", TEXTOS_PADRAO['consideracoes_finais'], 'textarea[name="consideracoesFinais"]')
@@ -1937,7 +2078,9 @@ class FenixAutomation:
                 self.log_status("⚠️ Erro nas informações básicas, mas continuando...", "warning")
             
             # Preencher campos de texto
-            if not await self.preencher_campos_texto(nucleo):
+            # Determinar tipo de organização baseado no context
+            tipo_organizacao = getattr(self, 'tipo_organizacao', 'nucleo')
+            if not await self.preencher_campos_texto(nucleo, tipo_organizacao):
                 self.log_status("⚠️ Erro nos campos de texto, mas continuando...", "warning")
             
             # Processar UPs
@@ -1954,6 +2097,98 @@ class FenixAutomation:
             self.stats['erros'].append(f"Núcleo {nucleo}: {str(e)}")
             return False
     
+    async def tentar_recuperar_navegador(self):
+        """
+        Tenta recuperar um navegador não responsivo usando várias estratégias
+        sem forçar reinicialização completa.
+        """
+        try:
+            self.log_status("🔧 Iniciando estratégias de recuperação do navegador...")
+            
+            # Estratégia 1: Tentar refresh da página atual
+            try:
+                self.log_status("📄 Estratégia 1: Tentando refresh da página...")
+                await self.page.reload(wait_until='networkidle')
+                await asyncio.sleep(2)
+                
+                # Testar se voltou a responder
+                titulo = await self.page.title()
+                self.log_status(f"✅ Página recarregada com sucesso! Título: {titulo}")
+                return True
+                
+            except Exception as e1:
+                self.log_status(f"⚠️ Estratégia 1 falhou: {str(e1)}")
+            
+            # Estratégia 2: Tentar navegar para URL principal
+            try:
+                self.log_status("🌐 Estratégia 2: Tentando navegar para página inicial...")
+                await self.page.goto('https://fenixflorestal.suzanonet.com.br/', wait_until='networkidle')
+                await asyncio.sleep(2)
+                
+                # Testar se voltou a responder
+                titulo = await self.page.title()
+                self.log_status(f"✅ Navegação bem-sucedida! Título: {titulo}")
+                return True
+                
+            except Exception as e2:
+                self.log_status(f"⚠️ Estratégia 2 falhou: {str(e2)}")
+            
+            # Estratégia 3: Tentar criar nova página no mesmo contexto
+            try:
+                self.log_status("📑 Estratégia 3: Tentando criar nova aba no mesmo navegador...")
+                if self.context:
+                    nova_pagina = await self.context.new_page()
+                    await nova_pagina.goto('https://fenixflorestal.suzanonet.com.br/', wait_until='networkidle')
+                    await asyncio.sleep(2)
+                    
+                    # Fechar página antiga e usar nova
+                    try:
+                        await self.page.close()
+                    except:
+                        pass
+                    
+                    self.page = nova_pagina
+                    titulo = await self.page.title()
+                    self.log_status(f"✅ Nova aba criada com sucesso! Título: {titulo}")
+                    return True
+                
+            except Exception as e3:
+                self.log_status(f"⚠️ Estratégia 3 falhou: {str(e3)}")
+            
+            self.log_status("❌ Todas as estratégias de recuperação falharam")
+            return False
+            
+        except Exception as e:
+            self.log_status(f"❌ Erro geral na recuperação: {str(e)}")
+            return False
+
+    async def preparar_para_novo_lancamento(self):
+        """Prepara o navegador para um novo lançamento, verificando e limpando o estado"""
+        try:
+            self.log_status("🧹 Preparando navegador para novo lançamento...")
+            
+            # Verificar se o navegador está responsivo
+            if not await self.verificar_estado_navegador():
+                self.log_status("❌ Navegador não está responsivo")
+                return False
+            
+            # Voltar para a página inicial
+            if not await self.voltar_para_inicio():
+                self.log_status("❌ Não foi possível voltar para a página inicial")
+                return False
+            
+            # Resetar estatísticas para o novo lançamento
+            self.stats['ups_processadas'] = 0
+            self.stats['ups_com_sucesso'] = []
+            self.stats['erros'] = []
+            
+            self.log_status("✅ Navegador preparado para novo lançamento!")
+            return True
+            
+        except Exception as e:
+            self.log_status(f"❌ Erro ao preparar navegador: {str(e)}")
+            return False
+
     async def executar_automacao_completa(self, df_ups, nucleos_selecionados):
         """Executa a automação completa"""
         try:
@@ -1962,6 +2197,13 @@ class FenixAutomation:
             
             # Verificar se é continuação de uma sessão existente
             browser_ja_aberto = hasattr(st.session_state, 'browser_ativo') and st.session_state.browser_ativo
+            
+            # Se o navegador já está aberto, preparar para novo lançamento
+            if browser_ja_aberto and self.browser and self.page:
+                if not await self.preparar_para_novo_lancamento():
+                    self.log_status("⚠️ Erro na preparação, mas continuando...")
+            else:
+                browser_ja_aberto = False
             
             if not browser_ja_aberto:
                 # Inicializar browser apenas se não estiver já aberto
@@ -1990,32 +2232,64 @@ class FenixAutomation:
                         if (old_instance.page and old_instance.browser and 
                             old_instance.context and old_instance.playwright):
                             
-                            # Teste mais simples - apenas verificar se a página existe
-                            current_url = old_instance.page.url
-                            if current_url:  # Se conseguiu obter URL, navegador está válido
-                                # Se chegou aqui, navegador está válido - reutilizar
-                                self.browser = old_instance.browser
-                                self.page = old_instance.page
-                                self.context = old_instance.context
-                                self.playwright = old_instance.playwright
-                                self.log_status("🔄 Reutilizando navegador já aberto")
+                            # Verificação robusta do navegador existente
+                            try:
+                                # Tentar uma operação simples para verificar se está responsivo
+                                await old_instance.page.evaluate('document.title')
+                                current_url = old_instance.page.url
                                 
-                                # Navegar para upload novamente
-                                if not await self.navegar_para_upload():
-                                    return False
-                            else:
-                                raise Exception("URL não disponível")
+                                if current_url and 'suzanonet' in current_url:
+                                    # Se chegou aqui, navegador está válido - reutilizar
+                                    self.browser = old_instance.browser
+                                    self.page = old_instance.page
+                                    self.context = old_instance.context
+                                    self.playwright = old_instance.playwright
+                                    self.log_status("🔄 Reutilizando navegador já aberto")
+                                    
+                                    # Verificar se precisa navegar de volta ao início
+                                    if not await self.preparar_para_novo_lancamento():
+                                        self.log_status("⚠️ Erro na preparação, reinicializando navegador...")
+                                        raise Exception("Falha na preparação do navegador")
+                                    
+                                    # Navegar para upload
+                                    if not await self.navegar_para_upload():
+                                        self.log_status("⚠️ Erro na navegação, reinicializando navegador...")
+                                        raise Exception("Falha na navegação para upload")
+                                else:
+                                    raise Exception("URL inválida ou não está no Fenix")
+                            except Exception as responsiveness_error:
+                                self.log_status(f"⚠️ Navegador não responsivo: {str(responsiveness_error)}")
+                                self.log_status("🔧 Tentando estratégias de recuperação...")
+                                
+                                # Estratégias de recuperação sem reiniciar o navegador
+                                if await self.tentar_recuperar_navegador():
+                                    self.log_status("✅ Navegador recuperado com sucesso!")
+                                    # Continuar com o navegador recuperado
+                                    if not await self.navegar_para_upload():
+                                        self.log_status("⚠️ Erro na navegação após recuperação")
+                                        raise Exception("Falha na navegação para upload após recuperação")
+                                else:
+                                    raise Exception("Não foi possível recuperar o navegador")
                         else:
                             raise Exception("Instâncias do navegador são None")
                             
                     except Exception as validation_error:
                         self.log_status(f"⚠️ Navegador existente inválido: {str(validation_error)}", "warning")
-                        self.log_status("🔄 Inicializando novo navegador...", "info")
                         
-                        # Limpar session_state
-                        st.session_state.browser_ativo = False
-                        if hasattr(st.session_state, 'automation_instance'):
-                            del st.session_state.automation_instance
+                        # Tentar recuperação antes de reinicializar
+                        self.log_status("� Tentando recuperar navegador existente antes de reinicializar...")
+                        if await self.tentar_recuperar_navegador():
+                            self.log_status("✅ Navegador recuperado! Continuando com sessão existente...")
+                            # Tentar navegar para upload com navegador recuperado
+                            if await self.navegar_para_upload():
+                                return True
+                            else:
+                                self.log_status("⚠️ Falhou ao navegar após recuperação, forçando reinicialização...")
+                        
+                        self.log_status("�🔄 Recuperação falhou, inicializando novo navegador...", "info")
+                        
+                        # Usar função de reinicialização forçada apenas como último recurso
+                        self.forcar_reinicializacao_navegador()
                         
                         # Inicializar novo navegador
                         if not await self.inicializar_browser():
@@ -2065,7 +2339,7 @@ class FenixAutomation:
                 # Pausa entre núcleos se houver mais de um
                 if len(nucleos_selecionados) > 1:
                     self.log_status("⏳ Aguardando 10 segundos antes do próximo núcleo...")
-                    await asyncio.sleep(10)
+                    await asyncio.sleep(5)
             
             # NOVA LÓGICA: Se processou apenas 1 núcleo, perguntar se quer continuar
             if len(nucleos_selecionados) == 1:
@@ -2151,9 +2425,11 @@ class FenixAutomation:
 # FUNÇÃO PRINCIPAL PARA USO NO APP.PY
 # =========================================================================
 
-def executar_lancamento_fenix(df_ups, nucleos_selecionados):
+def executar_lancamento_fenix(df_ups, nucleos_selecionados, tipo_organizacao=None):
     """Função principal que executa o lançamento no Fênix"""
-    automation = FenixAutomation()
+    # Determinar tipo de organização
+    organizacao_tipo = 'propriedade' if tipo_organizacao and tipo_organizacao.startswith("🏗️ Por Propriedade") else 'nucleo'
+    automation = FenixAutomation(organizacao_tipo)
     
     # Verificar se é continuação de sessão existente
     if hasattr(st.session_state, 'browser_ativo') and st.session_state.browser_ativo:
@@ -2379,14 +2655,21 @@ def atualizar_status_planilha(df_original, ups_processadas_com_sucesso, nome_arq
             up_str = str(up).strip()
             st.info(f"🔍 Procurando UP: '{up_str}'")
             
-            # Buscar a UP no DataFrame (comparação mais robusta)
+            # CORREÇÃO: Buscar a UP no DataFrame (comparação ainda mais robusta)
             # Tentar várias abordagens de comparação
             mask1 = df_atualizado['UP'].astype(str).str.strip() == up_str
             mask2 = df_atualizado['UP'].astype(str).str.strip().str.upper() == up_str.upper()
             mask3 = df_atualizado['UP'] == up  # Comparação direta
             
+            # NOVO: Busca mais flexível removendo espaços e caracteres especiais
+            up_clean = ''.join(c for c in up_str if c.isalnum()).upper()
+            mask4 = df_atualizado['UP'].astype(str).apply(lambda x: ''.join(c for c in str(x) if c.isalnum()).upper()) == up_clean
+            
+            # NOVO: Busca por substring (útil se há prefixos/sufixos diferentes)
+            mask5 = df_atualizado['UP'].astype(str).str.contains(up_str.replace(' ', ''), case=False, na=False)
+            
             # Combinar todas as máscaras
-            mask_final = mask1 | mask2 | mask3
+            mask_final = mask1 | mask2 | mask3 | mask4 | mask5
             
             linhas_encontradas = mask_final.sum()
             st.info(f"🔍 Linhas encontradas para UP '{up_str}': {linhas_encontradas}")
@@ -2407,10 +2690,18 @@ def atualizar_status_planilha(df_original, ups_processadas_com_sucesso, nome_arq
                 ups_nao_encontradas.append(up_str)
                 st.warning(f"⚠️ UP '{up_str}' não encontrada no DataFrame")
                 
+                # CORREÇÃO: Debug mais detalhado quando UP não é encontrada
+                st.info(f"🔍 UP procurada (original): '{up}' (tipo: {type(up)})")
+                st.info(f"🔍 UP procurada (string): '{up_str}'")
+                st.info(f"🔍 UP procurada (limpa): '{''.join(c for c in up_str if c.isalnum()).upper()}'")
+                
                 # Debug adicional: mostrar UPs similares
                 ups_similares = [u for u in ups_existentes if up_str.lower() in str(u).lower() or str(u).lower() in up_str.lower()]
                 if ups_similares:
                     st.info(f"🔍 UPs similares encontradas: {ups_similares[:5]}")
+                else:
+                    # Mostrar algumas UPs do DataFrame para comparação
+                    st.info(f"🔍 Algumas UPs existentes no DataFrame: {list(ups_existentes[:20])}")
         
         # Estado após a atualização
         depois_nao = len(df_atualizado[df_atualizado['Laudo Existente'].str.upper() == 'NÃO'])

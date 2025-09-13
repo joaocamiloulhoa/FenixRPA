@@ -208,8 +208,8 @@ def processar_lancamento(df_ups, nucleos_selecionados, df_original):
         # Salvar DataFrame original no session_state para posterior atualização
         st.session_state.df_original = df_original.copy()
         
-        # Usar o módulo de automação
-        resultado = executar_lancamento_fenix(df_ups, nucleos_selecionados)
+        # Usar o módulo de automação (função original sempre usa núcleo)
+        resultado = executar_lancamento_fenix(df_ups, nucleos_selecionados, "🏢 Por Núcleo")
         
         if resultado:
             st.balloons()  # Animação de comemoração
@@ -289,6 +289,17 @@ def processar_lancamento_novo(df_ups, grupos_selecionados, df_original, tipo_org
         # Salvar DataFrame original no session_state para posterior atualização
         st.session_state.df_original = df_original.copy()
         
+        # CORREÇÃO: Debug do DataFrame original antes do processamento
+        st.info(f"🔍 DEBUG: DataFrame original salvo com {len(df_original)} linhas")
+        st.info(f"🔍 DEBUG: Colunas disponíveis: {list(df_original.columns)}")
+        if 'UP' in df_original.columns:
+            ups_originais = df_original['UP'].unique()
+            st.info(f"🔍 DEBUG: Total de UPs únicas no DataFrame original: {len(ups_originais)}")
+            st.info(f"🔍 DEBUG: Primeiras 10 UPs do DataFrame original: {list(ups_originais[:10])}")
+        if 'Laudo Existente' in df_original.columns:
+            status_counts = df_original['Laudo Existente'].value_counts()
+            st.info(f"🔍 DEBUG: Status na coluna 'Laudo Existente': {dict(status_counts)}")
+        
         # Determinar se é por propriedade ou por núcleo e processar adequadamente
         if tipo_organizacao.startswith("🏗️ Por Propriedade"):
             st.info(f"🏗️ Processando por Propriedade usando coluna: {coluna_agrupamento}")
@@ -313,11 +324,11 @@ def processar_lancamento_novo(df_ups, grupos_selecionados, df_original, tipo_org
                 mask = df_para_processamento[coluna_agrupamento] == propriedade
                 df_para_processamento.loc[mask, 'Nucleo'] = propriedade
             
-            resultado = executar_lancamento_fenix(df_para_processamento, grupos_selecionados)
+            resultado = executar_lancamento_fenix(df_para_processamento, grupos_selecionados, tipo_organizacao)
             
         else:
             st.info("🏢 Processando por Núcleo (método original)")
-            resultado = executar_lancamento_fenix(df_ups, grupos_selecionados)
+            resultado = executar_lancamento_fenix(df_ups, grupos_selecionados, tipo_organizacao)
         
         if resultado:
             st.balloons()  # Animação de comemoração
@@ -339,6 +350,11 @@ def processar_lancamento_novo(df_ups, grupos_selecionados, df_original, tipo_org
         # Funcionalidade de atualização da planilha (mantida igual)
         if hasattr(st.session_state, 'mostrar_opcao_excel') and st.session_state.mostrar_opcao_excel:
             ups_processadas = getattr(st.session_state, 'ups_processadas_com_sucesso', [])
+            
+            # CORREÇÃO: Debug das UPs processadas
+            st.info(f"🔍 DEBUG: UPs registradas como processadas: {ups_processadas}")
+            st.info(f"🔍 DEBUG: Tipo de organização usado: {tipo_organizacao}")
+            st.info(f"🔍 DEBUG: Grupos selecionados: {grupos_selecionados}")
             if ups_processadas:
                 st.markdown("---")
                 st.subheader("📝 Atualização da Planilha")
