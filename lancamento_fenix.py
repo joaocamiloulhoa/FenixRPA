@@ -201,6 +201,8 @@ class FenixAutomation:
         self.page = None
         self.playwright = None
         self.tipo_organizacao = tipo_organizacao  # 'nucleo' ou 'propriedade'
+        self.email = None
+        self.senha = None
         
         self.stats = {
             'inicio': None,
@@ -296,7 +298,12 @@ class FenixAutomation:
             return False
     
     async def aguardar_login(self):
-        """Aguarda o usuário fazer login manualmente"""
+        """Faz login automático se credenciais foram fornecidas, caso contrário aguarda login manual"""
+        # Se temos credenciais, fazer login automático
+        if self.email and self.senha:
+            return await self.fazer_login_automatico()
+        
+        # Caso contrário, fazer login manual como antes
         self.log_status("🔐 Aguardando login manual...", "warning")
         self.log_status("⚠️ Se aparecer tela de login, faça o login no navegador aberto.")
         
@@ -330,6 +337,168 @@ class FenixAutomation:
             
         except Exception as e:
             self.log_status(f"❌ Erro durante aguardo de login: {str(e)}", "error")
+            return False
+    
+    async def fazer_login_automatico(self):
+        """Faz login automático usando as credenciais fornecidas"""
+        try:
+            self.log_status("🔐 Iniciando login automático...")
+            
+            if not self.email or not self.senha:
+                self.log_status("❌ Email ou senha não fornecidos", "error")
+                return False
+            
+            # Aguardar página carregar
+            self.log_status("⏳ Aguardando página carregar...")
+            await asyncio.sleep(3)
+            
+            # Verificar se já estamos logados
+            try:
+                submissao_btn = await self.page.query_selector('button:has-text("Submissão de Laudos")')
+                if submissao_btn:
+                    self.log_status("✅ Usuário já está logado!", "success")
+                    return True
+            except:
+                pass
+            
+            # PASSO 1: Clicar no botão específico //*[@id="__next"]/div[1]/div[2]/button
+            self.log_status("�️ Clicando no botão de login inicial...")
+            try:
+                login_btn_xpath = '//*[@id="__next"]/div[1]/div[2]/button'
+                login_btn = await self.page.wait_for_selector(f'xpath={login_btn_xpath}', timeout=10000)
+                await login_btn.click()
+                self.log_status("✅ Botão de login inicial clicado")
+                await asyncio.sleep(2)
+            except Exception as e:
+                self.log_status(f"❌ Erro ao clicar no botão de login inicial: {str(e)}", "error")
+                return False
+            
+            # PASSO 2: Aguardar tela de email aparecer e preencher
+            self.log_status("📧 Aguardando tela de email aparecer...")
+            try:
+                # Múltiplas estratégias para encontrar campo de email
+                email_selectors = [
+                    'input[type="email"]',
+                    'input[name="email"]',
+                    'input[name="loginfmt"]',  # Campo comum do Microsoft
+                    'input[placeholder*="email"]',
+                    'input[placeholder*="Email"]',
+                    'input[id*="email"]',
+                    '#i0116',  # ID comum do campo email Microsoft
+                    'input[type="text"]:first-of-type'
+                ]
+                
+                email_field = None
+                for selector in email_selectors:
+                    try:
+                        email_field = await self.page.wait_for_selector(selector, timeout=5000)
+                        if email_field:
+                            self.log_status(f"✅ Campo de email encontrado: {selector}")
+                            break
+                    except:
+                        continue
+                
+                if not email_field:
+                    self.log_status("❌ Campo de email não encontrado", "error")
+                    return False
+                
+                await email_field.fill(self.email)
+                self.log_status(f"✅ Email preenchido: {self.email}")
+                
+                # Pressionar Enter após email
+                self.log_status("⌨️ Pressionando Enter após email...")
+                await self.page.keyboard.press('Enter')
+                await asyncio.sleep(3)
+                
+            except Exception as e:
+                self.log_status(f"❌ Erro ao preencher email: {str(e)}", "error")
+                return False
+            
+            # PASSO 3: Aguardar tela de senha aparecer e preencher
+            self.log_status("🔒 Aguardando tela de senha aparecer...")
+            try:
+                # Múltiplas estratégias para encontrar campo de senha
+                senha_selectors = [
+                    'input[type="password"]',
+                    'input[name="passwd"]',  # Campo comum do Microsoft
+                    'input[name="password"]',
+                    'input[id*="password"]',
+                    '#i0118',  # ID comum do campo senha Microsoft
+                    'input[placeholder*="senha"]',
+                    'input[placeholder*="password"]'
+                ]
+                
+                senha_field = None
+                for selector in senha_selectors:
+                    try:
+                        senha_field = await self.page.wait_for_selector(selector, timeout=5000)
+                        if senha_field:
+                            self.log_status(f"✅ Campo de senha encontrado: {selector}")
+                            break
+                    except:
+                        continue
+                
+                if not senha_field:
+                    self.log_status("❌ Campo de senha não encontrado", "error")
+                    return False
+                
+                await senha_field.fill(self.senha)
+                self.log_status("✅ Senha preenchida")
+                
+                # Pressionar Enter após senha
+                self.log_status("⌨️ Pressionando Enter após senha...")
+                await self.page.keyboard.press('Enter')
+                
+            except Exception as e:
+                self.log_status(f"❌ Erro ao preencher senha: {str(e)}", "error")
+                return False
+            
+            # PASSO 4: Aguardar 10 segundos para autenticação 2 fatores
+            self.log_status("🔐 Aguardando 10 segundos para autenticação 2 fatores...")
+            await asyncio.sleep(10)
+            
+            # PASSO 5: Verificar se aparece tela para guardar informações e pressionar Enter
+            self.log_status("💾 Verificando tela para guardar informações...")
+            try:
+                # Aguardar um pouco para a tela aparecer
+                await asyncio.sleep(3)
+                
+                # Pressionar Enter para aceitar guardar informações
+                self.log_status("⌨️ Pressionando Enter para guardar informações...")
+                await self.page.keyboard.press('Enter')
+                
+                # Aguardar redirecionamento final
+                await asyncio.sleep(5)
+                
+            except Exception as e:
+                self.log_status(f"⚠️ Possível erro ao guardar informações: {str(e)}", "warning")
+            
+            # Aguardar login ser processado
+            self.log_status("⏳ Aguardando processamento do login...")
+            await asyncio.sleep(5)
+            
+            # Verificar se login foi bem-sucedido
+            success_selectors = [
+                'button:has-text("Submissão de Laudos")',
+                'text="Submissão de Laudos"',
+                'button:has-text("Laudos")',
+                'text="Dashboard"'
+            ]
+            
+            for selector in success_selectors:
+                try:
+                    success_element = await self.page.wait_for_selector(selector, timeout=15000)
+                    if success_element:
+                        self.log_status("✅ Login realizado com sucesso!", "success")
+                        return True
+                except:
+                    continue
+            
+            self.log_status("❌ Login falhou - não foi possível verificar página principal", "error")
+            return False
+                
+        except Exception as e:
+            self.log_status(f"❌ Erro durante login automático: {str(e)}", "error")
             return False
     
     async def verificar_estado_navegador(self):
@@ -2425,11 +2594,16 @@ class FenixAutomation:
 # FUNÇÃO PRINCIPAL PARA USO NO APP.PY
 # =========================================================================
 
-def executar_lancamento_fenix(df_ups, nucleos_selecionados, tipo_organizacao=None):
+def executar_lancamento_fenix(df_ups, nucleos_selecionados, tipo_organizacao=None, email=None, senha=None):
     """Função principal que executa o lançamento no Fênix"""
     # Determinar tipo de organização
     organizacao_tipo = 'propriedade' if tipo_organizacao and tipo_organizacao.startswith("🏗️ Por Propriedade") else 'nucleo'
     automation = FenixAutomation(organizacao_tipo)
+    
+    # Configurar credenciais se fornecidas
+    if email and senha:
+        automation.email = email
+        automation.senha = senha
     
     # Verificar se é continuação de sessão existente
     if hasattr(st.session_state, 'browser_ativo') and st.session_state.browser_ativo:
