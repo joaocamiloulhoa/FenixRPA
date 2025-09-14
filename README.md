@@ -1,20 +1,43 @@
-# 🤖 Sistema RPA Fênix - Versão Final
+# 🤖 Sistema RPA Fênix - Versão Organizada
 
-Sistema de automação RPA (Robotic Process Automation) para o Fênix Florestal da Suzano, desenvolvido com Playwright e Streamlit, oferecendo visualização em tempo real do processamento dos dados.
+Sistema de automação RPA (Robotic Process Automation) para o Fênix Florestal da Suzano, desenvolvido com Playwright e Streamlit, oferecendo interface moderna com login automático Microsoft SSO.
 
-## 📋 Funcionalidades
+## � Estrutura do Projeto
 
-### ✅ Funcionalidades Implementadas
-- **🔄 Automação Completa**: Processamento automático de laudos no Fênix Florestal
-- **👁️ Visualização em Tempo Real**: Interface gráfica mostrando o progresso em tempo real
-- **📊 Dashboard Interativo**: Métricas e estatísticas durante o processamento
-- **🔐 Sistema de Login Inteligente**: Detecção automática de login bem-sucedido
-- **📁 Upload de Excel**: Carregamento e validação automática de arquivos Excel
-- **🎯 Processamento Seletivo**: Opção de processar todos os núcleos ou apenas um específico
-- **📈 Relatórios Detalhados**: Relatório final com estatísticas completas
-- **🛡️ Tratamento de Erros**: Sistema robusto com múltiplas tentativas e fallbacks
+```
+FenixRPA/
+├── 📄 app.py                    # Interface principal Streamlit
+├── � lancamento_fenix.py       # Motor de automação do Fênix
+├── � cria_pdf.py              # Gerador de PDFs com imagens
+├── ⚙️ config.py                # Configurações do sistema
+├── 📋 requirements.txt          # Dependências Python
+├── � README.md                # Este arquivo
+├── 📁 docs/                    # Documentação técnica
+├── 📁 backup/                  # Arquivos de backup e logs
+├── 📁 tests/                   # Scripts de teste
+└── 📁 examples/                # Dados e imagens de exemplo
+```
 
-### 🏗️ Arquitetura do Sistema
+## � Funcionalidades Principais
+
+### ✅ Sistema de Login Automático
+- **🔐 Microsoft SSO**: Autenticação automática via Microsoft
+- **📧 Concatenação de Email**: Automática com @suzano.com.br
+- **� Fluxo em 5 Etapas**: Botão inicial → Email → Senha → 2FA → Confirmação
+- **⏱️ Timing Inteligente**: Espera automática para autenticação 2FA
+
+### 📊 Processamento de Laudos
+- **📋 Organização Flexível**: Por Núcleo ou Por Propriedade
+- **🎯 Seleção Inteligente**: Individual ou múltipla
+- **📈 Progresso em Tempo Real**: Visualização detalhada do processamento
+- **🔄 Continuidade de Sessão**: Navegador mantido para múltiplos processamentos
+
+### 📄 Geração de PDFs
+- **�️ Integração com Imagens**: Croquis e fotos automáticas
+- **📝 Templates Profissionais**: Laudos formatados
+- **📊 Relatórios Completos**: Estatísticas e métricas
+
+## 🏗️ Arquitetura Técnica
 
 ```
 Sistema RPA Fênix/

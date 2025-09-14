@@ -5,7 +5,6 @@ import traceback
 from datetime import datetime
 from cria_pdf import criar_pdf_streamlit
 from lancamento_fenix import executar_lancamento_fenix, get_recomendacao, atualizar_status_planilha, fechar_navegador_manual
-from lancamento_fenix_hard import executar_lancamento_fenix_hard, obter_propriedades_por_unf
 
 # Mantendo apenas as funções auxiliares de texto que são usadas pela interface
 
@@ -424,187 +423,6 @@ def processar_lancamento_novo(df_ups, grupos_selecionados, df_original, tipo_org
         import traceback
         st.error(f"Stack trace: {traceback.format_exc()}")
 
-def lancamento_fenix_hard():
-    """Interface para Lançamento Automático no Fênix (Hard Mode)"""
-    st.header("🚀 Lançamento Fênix Hard - Modo Automático")
-    st.info("💪 Este modo processa automaticamente todas as propriedades selecionadas sem intervenção do usuário.")
-    
-    # Upload do arquivo Excel
-    uploaded_file = st.file_uploader("Escolha um arquivo Excel", type=['xlsx', 'xls'], key="hard_excel_uploader")
-    
-    if uploaded_file is not None:
-        try:
-            # Lê o arquivo Excel
-            df = pd.read_excel(uploaded_file)
-            st.success(f"✅ Arquivo carregado com sucesso! {len(df)} linhas encontradas.")
-            
-            # Verifica colunas necessárias e normaliza nomes
-            required_columns = ['UP', 'UNF', 'Idade', 'Ocorrência Predominante', 'Severidade Predominante', 'Incidencia', 'Laudo Existente']
-            
-            # Verificar se existe coluna de propriedade (aceitar variações)
-            propriedade_col = None
-            for col in df.columns:
-                if col.lower() in ['propriedade', 'property']:
-                    propriedade_col = col
-                    break
-            
-            if propriedade_col is None:
-                st.error("❌ Coluna de propriedade não encontrada. Procurando por: 'propriedade', 'Propriedade', 'property'")
-                st.info("📋 Colunas disponíveis no arquivo:")
-                st.write(list(df.columns))
-                return
-            
-            # Normalizar nome da coluna de propriedade
-            if propriedade_col != 'Propriedade':
-                df = df.rename(columns={propriedade_col: 'Propriedade'})
-                st.success(f"✅ Coluna '{propriedade_col}' renomeada para 'Propriedade'")
-            
-            # Verificar outras colunas obrigatórias
-            missing_columns = [col for col in required_columns if col not in df.columns]
-            
-            if missing_columns:
-                st.error(f"❌ Colunas obrigatórias não encontradas: {', '.join(missing_columns)}")
-                st.info("📋 Colunas disponíveis no arquivo:")
-                st.write(list(df.columns))
-                return
-            
-            # Filtrar apenas registros sem laudo
-            df_sem_laudo = df[df['Laudo Existente'].str.upper() == 'NÃO'].copy()
-            
-            if len(df_sem_laudo) == 0:
-                st.warning("⚠️ Não há registros sem laudo para processar.")
-                return
-            
-            st.success(f"📊 {len(df_sem_laudo)} UPs sem laudo encontradas para processamento.")
-            
-            # Seção de Credenciais
-            st.subheader("🔐 Credenciais de Acesso")
-            col1, col2 = st.columns(2)
-            
-            with col1:
-                email_partial = st.text_input("📧 Email:", placeholder="seu.email", key="hard_email", help="Digite apenas a parte antes do @. O @suzano.com.br será adicionado automaticamente.")
-            
-            with col2:
-                senha = st.text_input("🔒 Senha:", type="password", placeholder="Sua senha", key="hard_senha")
-            
-            if not email_partial or not senha:
-                st.warning("⚠️ Por favor, preencha email e senha para continuar.")
-                return
-            
-            # Concatenar automaticamente com @suzano.com.br
-            email_completo = f"{email_partial}@suzano.com.br"
-            
-            # Seleção de UNF
-            st.subheader("🏢 Seleção de UNF")
-            unfs_disponveis = sorted(df_sem_laudo['UNF'].unique())
-            
-            if len(unfs_disponveis) == 0:
-                st.error("❌ Nenhuma UNF encontrada nos dados.")
-                return
-            
-            unf_selecionada = st.selectbox("Selecione a UNF:", unfs_disponveis, key="hard_unf_select")
-            
-            if unf_selecionada:
-                # Mostrar propriedades disponíveis para a UNF selecionada
-                st.subheader(f"🏗️ Propriedades da UNF {unf_selecionada}")
-                
-                propriedades_info = obter_propriedades_por_unf(df_sem_laudo, unf_selecionada)
-                
-                if not propriedades_info:
-                    st.warning(f"⚠️ Nenhuma propriedade encontrada para UNF {unf_selecionada}")
-                    return
-                
-                # Mostrar propriedades em formato de tabela
-                propriedades_df = pd.DataFrame([
-                    {"Propriedade": prop, "Quantidade de UPs": qtd}
-                    for prop, qtd in propriedades_info.items()
-                ])
-                
-                st.dataframe(propriedades_df, use_container_width=True)
-                
-                # Seleção múltipla de propriedades
-                st.subheader("✅ Seleção de Propriedades")
-                todas_propriedades = list(propriedades_info.keys())
-                
-                # Opção de selecionar todas
-                if st.checkbox("🎯 Selecionar todas as propriedades", key="hard_select_all"):
-                    propriedades_selecionadas = todas_propriedades
-                else:
-                    propriedades_selecionadas = st.multiselect(
-                        "Escolha as propriedades para processar:",
-                        todas_propriedades,
-                        key="hard_propriedades_select"
-                    )
-                
-                if propriedades_selecionadas:
-                    # Mostrar resumo
-                    total_ups = sum(propriedades_info[prop] for prop in propriedades_selecionadas)
-                    
-                    st.success(f"📋 Resumo da Seleção:")
-                    st.info(f"🏗️ {len(propriedades_selecionadas)} propriedades selecionadas")
-                    st.info(f"📊 {total_ups} UPs serão processadas")
-                    st.info(f"🏢 UNF: {unf_selecionada}")
-                    
-                    # Lista das propriedades selecionadas
-                    st.write("**Propriedades selecionadas:**")
-                    for prop in propriedades_selecionadas:
-                        st.write(f"• {prop} ({propriedades_info[prop]} UPs)")
-                    
-                    # Botão para iniciar processamento
-                    st.markdown("---")
-                    
-                    # Aviso importante
-                    st.warning("⚠️ **ATENÇÃO**: O modo Hard é totalmente automático. Uma vez iniciado, o sistema processará todas as propriedades selecionadas sem parar para confirmações.")
-                    
-                    col_btn1, col_btn2 = st.columns(2)
-                    
-                    with col_btn1:
-                        if st.button("🚀 INICIAR PROCESSAMENTO AUTOMÁTICO", type="primary", key="hard_start_processing", use_container_width=True):
-                            st.info("🎯 Iniciando processamento automático...")
-                            
-                            # Validar novamente as credenciais
-                            if not email_completo or not senha:
-                                st.error("❌ Email e senha são obrigatórios!")
-                                return
-                            
-                            # Executar processamento
-                            with st.status("🔄 Processando todas as propriedades...", expanded=True) as status:
-                                resultado = executar_lancamento_fenix_hard(
-                                    df_sem_laudo, 
-                                    email_completo, 
-                                    senha, 
-                                    unf_selecionada, 
-                                    propriedades_selecionadas
-                                )
-                                
-                                if resultado:
-                                    status.update(label="✅ Processamento concluído com sucesso!", state="complete", expanded=False)
-                                    st.balloons()
-                                    st.success("🎉 Todas as propriedades foram processadas automaticamente!")
-                                else:
-                                    status.update(label="❌ Processamento concluído com erros", state="error", expanded=True)
-                                    st.error("💥 Houve erros durante o processamento. Verifique os logs acima.")
-                    
-                    with col_btn2:
-                        if st.button("📋 Visualizar Dados", key="hard_preview_data", use_container_width=True):
-                            st.subheader("👀 Prévia dos Dados que Serão Processados")
-                            
-                            # Filtrar dados pelas propriedades selecionadas
-                            dados_preview = df_sem_laudo[
-                                (df_sem_laudo['UNF'] == unf_selecionada) & 
-                                (df_sem_laudo['Propriedade'].isin(propriedades_selecionadas))
-                            ]
-                            
-                            colunas_preview = ['UP', 'Propriedade', 'Ocorrência Predominante', 'Severidade Predominante', 'Incidencia', 'Idade']
-                            st.dataframe(dados_preview[colunas_preview], use_container_width=True)
-                            
-                else:
-                    st.info("👆 Selecione pelo menos uma propriedade para continuar.")
-                    
-        except Exception as e:
-            st.error(f"❌ Erro ao processar o arquivo: {str(e)}")
-            st.error(f"🔍 Detalhes: {traceback.format_exc()}")
-
 def criar_pdf():
     # Chama a função do módulo cria_pdf.py
     criar_pdf_streamlit()
@@ -626,7 +444,7 @@ def main():
     st.sidebar.title("Menu de Opções")
     opcao = st.sidebar.radio(
         "Selecione a operação desejada:",
-        ["Lançamento no Fênix", "Lançamento Fênix Hard", "Criar PDF com Imagens e Croquis"],
+        ["Lançamento no Fênix", "Criar PDF com Imagens e Croquis"],
         key="menu_principal"
     )
     
@@ -642,8 +460,6 @@ def main():
     # Navegação baseada na escolha do usuário
     if opcao == "Lançamento no Fênix":
         lancamento_fenix()
-    elif opcao == "Lançamento Fênix Hard":
-        lancamento_fenix_hard()
     else:
         criar_pdf()
 
